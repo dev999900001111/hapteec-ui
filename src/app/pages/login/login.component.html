@@ -1,0 +1,158 @@
+<style>
+    /* 警告スタイル */
+    .warning {
+        /* 背景色：薄い黄色 */
+        background-color: #fff3cd;
+        /* 文字色：濃い茶色 */
+        color: #856404;
+        /* 枠線色：薄いオレンジ */
+        border: 1px solid #ffeeba;
+        /* 内側の余白 */
+        padding: 10px;
+        /* 角を少し丸くする */
+        border-radius: 4px;
+        /* 文字サイズ */
+        font-size: 16px;
+        margin-bottom: 20px;
+    }
+
+    .eye {
+        position: absolute;
+        margin-top: 10px;
+        right: 36px;
+    }
+</style>
+<ng-template #errorArea>
+    @if(errorMessageList.length>0){
+    <mat-card appearance="outlined" class="warning">
+        <mat-card-content>
+            @for(errorMessage of errorMessageList; track $index){
+            <div class="text-left">{{ errorMessage | translate }}</div>
+            }
+        </mat-card-content>
+    </mat-card>
+    }
+</ng-template>
+<div class="login-container">
+
+    <div class="flex items-center gap-5 mb-10 pb-7">
+        <!-- <img class="block w-[96px] h-[96px]" src="/image/hapteec-full.png"> -->
+        <img class="block w-[96px] h-[96px]" src="./image/hapteec-mid.png">
+        <h1 class="!m-0">{{ 'HAPTEEC_UI' | translate }}</h1>
+    </div>
+    @switch (loginState) {
+    @case ('login') {
+
+    <h2 class="login-title">{{ 'LOGIN' | translate }}</h2>
+    <ng-container *ngTemplateOutlet="errorArea"></ng-container>
+    <form [formGroup]="loginForm" class="login-form" (ngSubmit)="onSubmit()">
+
+        @for(group of curEnv.oAuthProviders;track $index){
+        @if(group.providers.length===1){
+        <a class="login-button federation" href="/api/oauth/{{group.value+(group.providers[0].id?('-'+group.providers[0].id):'')}}/login">
+            <img src="./image/{{group.value}}-logo.svg">{{group.label}}{{group.providers[0].id?('('+group.providers[0].id+')'):''}}認証
+        </a>
+        } @else {
+          <mat-expansion-panel style="background: transparent;">
+            <mat-expansion-panel-header class="login-button federation" style="border-radius: 55px;">
+              <img src="./image/{{group.value}}-logo.svg" class="mr-4">{{group.label}}認証
+              <!-- <mat-panel-title>{{group.label}}</mat-panel-title> -->
+            </mat-expansion-panel-header>
+            @for(provider of group.providers;track $index){
+              <a class="login-button federation" href="/api/oauth/{{group.value+(provider.id?('-'+provider.id):'')}}/login">
+                  <img src="./image/{{group.value}}-logo.svg">{{group.label}}{{provider.id?('('+provider.id+')'):''}}認証
+              </a>
+              }
+          </mat-expansion-panel>
+        }
+        }
+
+        <div class="w-full my-10" style="border: 1px solid gray;"></div>
+        <h3 class="text-left">個別認証</h3>
+        <div class="form-group">
+            <label for="email">{{ 'EMAIL' | translate }}</label>
+            <input formControlName="email" type="text" id="email" name="email"
+                placeholder="{{ 'ENTER_EMAIL' | translate }}">
+        </div>
+        <div class="form-group">
+            <label for="password">{{ 'PASSWORD' | translate }}</label>
+            <input formControlName="password" [type]="hidePassword?'password':'text'" id="password" name="password"
+                placeholder="{{ 'ENTER_PASSWORD' | translate }}">
+            <mat-icon class="eye" (click)="hidePassword=!hidePassword">visibility{{hidePassword?'':'_off'}}</mat-icon>
+        </div>
+        <button type="submit" class="login-button" [disabled]="loginForm.invalid">{{ 'LOGIN' | translate }}</button>
+        <a href="javascript:void(0)" (click)="loginState='sendmail'" class="forgot-password">
+            {{ 'FORGOT_PASSWORD' | translate }}
+        </a>
+        <!-- <a href="javascript:void(0)" (click)="guestLogin()" class="forgot-password">
+            {{ 'GUEST_USER' | translate }}
+        </a> -->
+        <a href="javascript:void(0)" (click)="loginState='sendmail'" class="forgot-password">
+            {{ 'SIGN_UP' | translate }}
+        </a>
+    </form>
+    }
+    @case ('sendmail') {
+    <h2 class="login-title">{{ 'EMAIL_CONFIRM' | translate }}</h2>
+    <ng-container *ngTemplateOutlet="errorArea"></ng-container>
+    <form [formGroup]="sendMailForm" class="login-form" (submit)="onSend()">
+        <div class="form-group">
+            <label for="email">{{ 'EMAIL' | translate }}</label>
+            <input formControlName="email" type="text" id="email" name="email"
+                placeholder="{{ 'ENTER_EMAIL' | translate }}">
+        </div>
+        <button type="submit" class="login-button" [disabled]="sendMailForm.invalid">{{ 'SEND' | translate }}</button>
+        <a href="javascript:void(0)" (click)="loginState='login'" class="forgot-password">
+            {{ 'BACK' | translate }}
+        </a>
+    </form>
+
+    }
+    @case ('sendmailfine') {
+    <h2 class="login-title">{{ 'EMAIL_CONFIRM' | translate }}</h2>
+    <ng-container *ngTemplateOutlet="errorArea"></ng-container>
+    <div class="text-left">
+        {{ 'EMAIL_SENT_MESSAGE' | translate }}
+    </div>
+    }
+    @case ('password-reset') {
+    <h2 class="login-title">{{ 'PASSWORD_RESET' | translate }}</h2>
+    <div class="text-left">
+        <p>16文字以上。大文字、小文字、数字、記号を含めること。</p>
+        <p><a href="javascript:void(0)" (click)="onGeneratePassword()">自動生成</a>時は必ずパスワードをメモしてください。</p>
+    </div>
+    <ng-container *ngTemplateOutlet="errorArea"></ng-container>
+
+    <form [formGroup]="passwordResetForm" class="login-form" (ngSubmit)="onReset()">
+        <div class="form-group">
+            <label for="password">{{ 'PASSWORD' | translate }}</label>
+            <input formControlName="password" [type]="hidePassword?'password':'text'" id="password" name="password"
+                placeholder="{{ 'ENTER_PASSWORD' | translate }}">
+            <mat-icon class="eye" (click)="hidePassword=!hidePassword">visibility{{hidePassword?'':'_off'}}</mat-icon>
+        </div>
+        <div class="form-group">
+            <label for="passwordConfirm">{{ 'PASSWORD_CONFIRM' | translate }}</label>
+            <input formControlName="passwordConfirm" [type]="hidePasswordConfirm?'password':'text'" id="passwordConfirm"
+                name="passwordConfirm" placeholder="{{ 'ENTER_PASSWORD_CONFIRM' | translate }}">
+            <mat-icon class="eye"
+                (click)="hidePasswordConfirm=!hidePasswordConfirm">visibility{{hidePasswordConfirm?'':'_off'}}</mat-icon>
+        </div>
+        <button type="submit" class="login-button" [disabled]="passwordResetForm.invalid">
+            {{ 'RESET' | translate}}
+        </button>
+        <a href="javascript:void(0)" (click)="loginState='login'" class="forgot-password">
+            {{ 'LOGIN' | translate }}
+        </a>
+        <a href="javascript:void(0)" (click)="loginState='sendmail'" class="forgot-password">
+            {{ 'FORGOT_PASSWORD' | translate }}
+        </a>
+        <a href="javascript:void(0)" (click)="loginState='sendmail'" class="forgot-password">
+            {{ 'SIGN_UP' | translate }}
+        </a>
+    </form>
+    }
+    @default {
+    {{ 'DEFAULT_CASE' | translate }}
+    }
+    }
+</div>

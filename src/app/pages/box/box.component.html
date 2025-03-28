@@ -1,0 +1,353 @@
+<div class="flex w-full h-full" appFileDrop (filesDropped)="onFilesDropped($event)">
+    <div class="flex flex-col h-full pb-10">
+        <div class="p-4">
+            <app-app-menu></app-app-menu>
+        </div>
+        <a class="unstyled-link p-4" [routerLink]="['/box','folder','0']">
+            <button mat-button>
+                <mat-icon>folder</mat-icon>
+                すべてのファイル
+            </button>
+        </a>
+
+        <!-- BoxのURLリンク解釈 -->
+        <form class="flex items-center gap-2 p-2" (submit)="boxUrlMove()">
+            <mat-form-field>
+                <mat-label>BoxのURL</mat-label>
+                <input matInput [(ngModel)]="boxUrl" type="text" name="boxUrl">
+            </mat-form-field>
+            <button type="submit" mat-raised-button color="primary" style="width: 80px;">開く</button>
+        </form>
+
+        <!-- コレクション一覧 -->
+        <div class="custom-scroll custom-scroll--thin">
+            @for(entry of collectionList?.entries;track $index) {
+            <mat-expansion-panel (opened)="onOpenCollection(entry)">
+                <mat-expansion-panel-header>
+                    <mat-panel-title>
+                        <div class="cursor-pointer flex items-center p-2">
+                            <mat-icon
+                                class="mr-2">{{entry.collection_type==='favorites'?'bookmark_star':'bookmark'}}</mat-icon>
+                            <div class="truncate flex-grow">{{entry.name}}</div>
+                        </div>
+                    </mat-panel-title>
+                </mat-expansion-panel-header>
+                <div class="p-2">
+                    @if(entry.items) {
+
+                    @if(entry.items.entries.length>0){
+                    @for(item of entry.items.entries;track $index) {
+                    <a [routerLink]="['/box','folder',item.id]" style="width: 280px;"
+                        class="unstyled-link flex items-center p-2 pr-0" [title]="item.name">
+                        @if(item.type==='folder'){
+                        <ng-container *ngTemplateOutlet="folderIconTmpl; context:{$implicit:item}"></ng-container>
+                        } @else {
+                        <ng-container *ngTemplateOutlet="fileIconTmpl; context:{$implicit:item}"></ng-container>
+                        }
+                        <span class="truncate flex-grow w-0 ml-2">{{item.name}}</span>
+                    </a>
+                    }
+                    } @else {
+                    <div>データがありません</div>
+                    }
+
+                    } @else {
+                    <!-- <mat-spinner></mat-spinner> -->
+                    Loading...
+                    }
+                </div>
+            </mat-expansion-panel>
+            }
+        </div>
+
+        <!-- コレクション登録フォーム -->
+        <div class="flex items-center gap-2 p-2">
+            <mat-form-field>
+                <mat-label>コレクションID</mat-label>
+                <input matInput [(ngModel)]="collectionId" type="text" (input)="checkCollectionId($event)">
+            </mat-form-field>
+            <button [disabled]="!enableCollectionId" mat-raised-button color="primary" (click)="registCollection()"
+                style="width: 80px;">登録</button>
+        </div>
+
+        <div class="text-xs p-2">
+            ※コレクションはAPIでは取得できないため、<br />
+            自分でBoxのURLを見て登録してください。<br />
+            「https://*.box.com/collection/XXXXXXXXXX」<br />
+            ↑XXXXXXXXXXの部分がコレクションIDです。
+        </div>
+
+    </div>
+
+    <div class="w-0 flex-grow flex flex-col h-full">
+        <div>
+            <div class="flex gap-8 items-center">
+                <div>
+                    <!-- 検索ボックス -->
+                    <div class="flex items-center gap-2 p-2">
+                        <mat-form-field>
+                            <mat-label>検索キーワード</mat-label>
+                            <input type="text" matInput placeholder="検索キーワード" [(ngModel)]="searchKeyword"
+                                (input)="onSearch($event)">
+                            <button mat-icon-button matSuffix (click)="searchKeyword='';boxSearchResult=undefined">
+                                <mat-icon>close</mat-icon>
+                            </button>
+                        </mat-form-field>
+                        <!-- <button mat-raised-button color="primary" (click)="onSearch($event)">検索</button> -->
+                    </div>
+
+                    <!-- 検索結果表示 -->
+                    @if(isSearching || boxSearchResult){
+                    <div class="absolute bg-[#212121] rounded-md shadow-md custom-scroll overflow-auto"
+                        style="margin-left: 10px;margin-top: -20px;z-index: 1;max-height: calc(100vh - 500px)">
+
+                        @if(boxSearchResult){
+                        @for(entry of boxSearchResult.entries;track $index){
+
+                        @if(entry.type === 'folder'){
+                        <a class="unstyled-link" mat-menu-item [routerLink]="['/box','folder',entry.id]"
+                            (click)="searchKeyword='';boxSearchResult=undefined;move($event, entry.id)">
+                            <div class="p-2">
+                                <div class="flex items-center">
+                                    <ng-container
+                                        *ngTemplateOutlet="folderIconTmpl; context:{$implicit:entry}"></ng-container>
+                                    {{entry.name}}
+                                </div>
+                                <div class="flex items-center gap-2 ml-10">
+                                    <div>{{entry.modified_at|date:dateFormat}}</div>
+                                    <div>{{entry.modified_by.name||'以前のコラボレータ'}}</div>
+                                    <div class="w-0 flex-grow"></div>
+                                    <div>{{entry.path_collection.entries.at(-1)?.name}}</div>
+                                </div>
+                            </div>
+                        </a>
+                        } @else if(entry.type === 'file'){
+                        <a class="unstyled-link" href="{{boxOriginUri}}/file/{{entry.id}}" mat-menu-item
+                            (click)="searchKeyword='';boxSearchResult=undefined" target="_blank">
+                            <div class="p-2">
+                                <div class="flex items-center">
+                                    <ng-container
+                                        *ngTemplateOutlet="fileIconTmpl; context:{$implicit:entry}"></ng-container>
+                                    {{entry.name}}
+                                    @if(entry.version_number>1){
+                                    <span class="version-tag">v{{entry.version_number}}</span>
+                                    }
+                                    <mat-icon>open_in_new</mat-icon>
+                                </div>
+                                <div class="flex items-center gap-2 ml-10 unstyled-link">
+                                    <div>{{entry.modified_at|date:dateFormat}}</div>
+                                    <div>{{entry.modified_by.name||'以前のコラボレータ'}}</div>
+                                    <div class="w-0 flex-grow"></div>
+                                    <div>{{entry.path_collection.entries.at(-1)?.name}}</div>
+                                </div>
+                            </div>
+                        </a>
+                        } @else {
+                        <!-- web_linkが検索結果に上がってくることはないのではないか？ -->
+                        {{entry|json}}
+                        }
+
+                        }
+                        }@else{
+                        <div class="w-48 h-48 flex items-center justify-center">
+                            <mat-spinner></mat-spinner>
+                        </div>
+                        }
+                    </div>
+                    }
+                </div>
+                <mat-radio-group color="primary" aria-label="sort type" [(ngModel)]="sortType" class="relative bottom-3"
+                    (change)="sort()">
+                    <mat-radio-button [value]="'name'">名前順</mat-radio-button>
+                    <mat-radio-button [value]="'timestamp'">時刻順</mat-radio-button>
+                    <mat-radio-button [value]="'size'">サイズ順</mat-radio-button>
+                </mat-radio-group>
+                <mat-radio-group color="primary" aria-label="sort type" [(ngModel)]="sortAscDesc"
+                    class="relative bottom-3" (change)="sort()">
+                    <mat-radio-button [value]="'asc'">昇順</mat-radio-button>
+                    <mat-radio-button [value]="'desc'">降順</mat-radio-button>
+                </mat-radio-group>
+            </div>
+        </div>
+
+        @if(tabList.length>0){
+        <mat-tab-group>
+            @for(tab of tabList;track tab.id) {
+            <mat-tab [label]="tab.name" (click)="move($event, tab.id)"></mat-tab>
+            }
+        </mat-tab-group>
+        }
+
+        @if(item) {
+
+        <!-- パスツリー -->
+        @if(item.item_collection && item.item_collection.entries){
+        <div class=" flex items-center gap-2 p-2">
+            <button class="channel-menu flex items-center" mat-icon-button [matMenuTriggerFor]="onTreeList"
+                [disabled]="1>item.path_collection.entries.length">
+                <mat-icon class="cursor-pointer mr-2">account_tree</mat-icon>
+            </button>
+            @for(index of [-2, -1];track $index){
+            @if(item.path_collection.entries.at(index); as entry) {
+            <a class="unstyled-link line" [routerLink]="['/box','folder',entry.id]" [title]="entry.name">
+                {{entry.name}}
+            </a>
+            /
+            }
+            }
+            <span class="font-bold line" [title]="item.name">{{item.name}}</span>
+            <a [href]="[boxOriginUri, item.type, item.id].join('/')" target="_blank"
+                (click)="$event.stopImmediatePropagation()" matTooltip="BOXで開く">
+                <button mat-icon-button>
+                    <mat-icon color="primary">open_in_new</mat-icon>
+                </button>
+            </a>
+
+        </div>
+        }
+        <mat-menu #onTreeList="matMenu">
+            @for(entry of item.path_collection.entries;track $index){
+            <!-- click stopImmediatePropagation()しなくてもよいか？ -->
+            <a [routerLink]="['/box','folder',entry.id]" class="unstyled-link line" mat-menu-item>
+                {{entry.name}}
+            </a>
+            }
+        </mat-menu>
+
+        <!-- アイテム一覧 -->
+        <div class="p-5 h-0 flex-grow custom-scroll" (scroll)="onScroll($event)">
+            @if(item.item_collection && item.item_collection.entries && item.item_collection.entries.length>0){
+
+            @for(entry of item.item_collection.entries;track $index) {
+
+            @if(entry.type === 'folder'){
+            <a [routerLink]="['/box','folder',entry.id]" class="unstyled-link flex justify-between items-center p-2"
+                [title]="entry.name">
+                <div class="flex items-center gap-2 p-2">
+                    <ng-container *ngTemplateOutlet="folderIconTmpl; context:{$implicit:entry}"></ng-container>
+                    <div>{{entry.name}}</div>
+                </div>
+                <ng-container *ngTemplateOutlet="itemInfoTempl; context:{$implicit:entry}"></ng-container>
+            </a>
+            } @else if(entry.type==='file') {
+            <a href="{{boxOriginUri}}/file/{{entry.id}}" class="unstyled-link flex justify-between items-center p-2"
+                [title]="entry.name" target="_blank">
+                <div class="flex items-center gap-2 p-2">
+                    <ng-container *ngTemplateOutlet="fileIconTmpl; context:{$implicit:entry}"></ng-container>
+                    <div>{{entry.name}}</div>
+                    @if(entry.version_number>1){
+                    <span class="version-tag">v{{entry.version_number}}</span>
+                    }
+                    <mat-icon color="primary">open_in_new</mat-icon>
+                </div>
+                <ng-container *ngTemplateOutlet="itemInfoTempl; context:{$implicit:entry}"></ng-container>
+            </a>
+            } @else if(entry.type === 'web_link'){
+            <a [href]="entry.url" class="unstyled-link flex justify-between items-center p-2" [title]="entry.name"
+                target="_blank">
+                <div class="flex items-center gap-2 p-2">
+                    <mat-icon>link</mat-icon>
+                    <div>{{entry.name}}</div>
+                    <mat-icon>open_in_new</mat-icon>
+                </div>
+                <ng-container *ngTemplateOutlet="itemInfoTempl; context:{$implicit:entry}"></ng-container>
+            </a>
+            } @else {
+            {{entry|json}}
+            }
+
+            }
+
+            } @else {
+            最初のファイルを追加して開始しましょう<br />
+            ドラッグ&ドロップでファイルやフォルダを追加できます。
+            }
+
+            @if (loading) {
+            <div class="flex justify-center">
+                <mat-spinner diameter="50"></mat-spinner>
+            </div>
+            }
+
+        </div>
+
+        } @else if(!isFine){
+        お探しのページが見つかりません。
+        }
+
+    </div>
+
+</div>
+
+<app-user-mark></app-user-mark>
+
+@if(isLoading){
+<div class="fixed top-0 left-0 flex items-center justify-center w-full h-full bg-black bg-opacity-50">
+    <mat-spinner></mat-spinner>
+</div>
+}
+
+<ng-template #itemInfoTempl let-entry>
+    <div class="flex items-center gap-2">
+        <div class="text-sm text-gray-300 text-right flex flex-col items-end">
+            @if(entry.modified_at){
+            <div>{{entry.modified_at|date:dateFormat}}</div>
+            <div class="flex items-center gap-2">
+                <div>{{entry.modified_by?.name||'以前のコラボレータ'}}</div>
+                <div class="text-right w-20">{{entry.size|fileSize:1}}</div>
+            </div>
+            } @else {
+            <div>Loading...</div>
+            <div>...</div>
+            }
+        </div>
+        <div (click)="stopImmediatePropagation($event)">
+            @if(entry.type==='file'){
+            <a [href]="'/api/user/oauth/api/box/box/2.0/files/'+entry.id+'/content'" target="_blank"
+                (click)="$event.stopImmediatePropagation()" matTooltip="Download">
+                <button mat-icon-button>
+                    <mat-icon color="primary">download</mat-icon>
+                </button>
+            </a>
+            }
+            <a [href]="[boxOriginUri,entry.type,entry.id].join('/')" target="_blank"
+                (click)="$event.stopImmediatePropagation()" matTooltip="BOXで開く">
+                <button mat-icon-button>
+                    <mat-icon color="primary">open_in_new</mat-icon>
+                </button>
+            </a>
+            <button mat-icon-button [matMenuTriggerFor]="itemMenu">
+                <mat-icon>more_vert</mat-icon>
+            </button>
+        </div>
+    </div>
+    <mat-menu #itemMenu="matMenu">
+        <a mat-menu-item class="unstyled-link" (click)="remove(entry)" mat-menu-item>
+            <mat-icon>delete</mat-icon>ゴミ箱へ
+        </a>
+    </mat-menu>
+</ng-template>
+
+<ng-template #folderIconTmpl let-entry>
+    @if(getVSCodeFolderIcon(entry.name); as folderIconType){
+    <img src="./vsc-material-icons/icons/{{folderIconType}}.svg" class="w-6 h-6">
+    }
+</ng-template>
+
+<ng-template #fileIconTmpl let-entry>
+    @if(getVSCodeFileIcon(entry.name); as fileIconType){
+    @if(fileIconType==='image') {
+    <!-- imageの時はローディング中の時は両方表示、結果が出たらどっちか表示 -->
+    @if(thumbnailStatusMas[entry.id]!=='error'){
+    <img src="/api/user/oauth/api/proxy/box/2.0/files/{{entry.id}}/thumbnail.png" class="w-6 h-6"
+        (load)="thumbnailStatusMas[entry.id]='fine'" (error)="thumbnailStatusMas[entry.id]='error'"
+        [hidden]="!thumbnailStatusMas[entry.id]">
+    }
+    @if(thumbnailStatusMas[entry.id]!=='fine'){
+    <img src="./vsc-material-icons/icons/{{fileIconType}}.svg" class="w-6 h-6">
+    }
+    } @else {
+    <img src="./vsc-material-icons/icons/{{fileIconType}}.svg" class="w-6 h-6">
+    }
+    }
+</ng-template>

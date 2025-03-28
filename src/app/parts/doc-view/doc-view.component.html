@@ -1,0 +1,41 @@
+<div class="flex justify-center w-full">
+    @if(fileGroup){
+    <div class="custom-scroll custom-scroll--thin content" #fileTree style="width: 500px">
+        <app-select-tree class="min-w-60" [fileGroup]="fileGroup" (selectFile$)="setFile($event)"></app-select-tree>
+    </div>
+    <div class="flex items-center cursor-ew-resize" [appDragDelta]="fileTree" position="right">
+        <mat-icon class="rotate-90 ">drag_handle</mat-icon>
+    </div>
+    <div class="custom-scroll flex-grow w-0 overflow-hidden">
+        <h3 [title]="label">{{label}}</h3>
+        @if(type==='image'){
+        <img class="content" [src]="dataUrl" />
+        }@else if(type==='text'){
+        <select [(ngModel)]="encode" (change)="decode()" style="margin:0 20px;background-color: #303030;">
+            <option value="UTF-8">UTF-8</option>
+            <option value="Windows-31J">Shift-JIS(Windows-31J)</option>
+            <option value="EUC-JP">EUC-JP</option>
+        </select>
+        <div class="content">
+            <markdown katex mermaid clipboard [data]="brackets.pre+text+brackets.post"></markdown>
+        </div>
+        }@else if(type==='audio'){
+        <audio class="content" [src]="dataUrl" controls></audio>
+        }@else if(type==='video'){
+        <video class="content" [src]="dataUrl" controls></video>
+        }@else if(type==='pdf'){
+        <iframe class="content" width="800" style="height:90vh;" [src]="pdfUrl"></iframe>
+        }@else {
+        @if(dataUrl){
+        <a href="javascript: void(0)" (click)="downloadFile()">このコンテンツは表示できません</a>
+        }
+        <div>{{dataUrl.substring(0,dataUrl.indexOf(','))}}</div>
+        }
+    </div>
+    <!-- 
+    @if(fileGroup.files.length&&fileGroup.files.length-1>index){
+    <button mat-icon-button (click)="setIndex(index+1)"><mat-icon>arrow_forward_ios</mat-icon></button>
+    }
+    -->
+    }
+</div>

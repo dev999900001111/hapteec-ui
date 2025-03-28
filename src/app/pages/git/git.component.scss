@@ -1,0 +1,45 @@
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th,
+td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+}
+
+.tree-invisible {
+    display: none;
+}
+
+.tree-node-item {
+    padding: 4px 0;
+    cursor: pointer;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th,
+td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+}
+
+
+mat-tree-node {
+    &:hover {
+        background-color: #444;
+    }
+}
+
+.search-box {
+    input {
+        background-color: #444;
+    }
+}
