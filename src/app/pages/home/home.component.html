@@ -1,0 +1,119 @@
+<div class="p-5">
+    <div class="container" appFileDrop (filesDropped)="onFilesDropped($event)">
+        <div class="min-h-32"></div>
+        <div class="flex justify-between items-center w-full">
+            <h1 style="margin-top:0;">AIチャットを始める</h1>
+            <div class="flex flex-col justify-between gap-3 items-end">
+                <select [(ngModel)]="model" class="model-select" (change)="changeModel()">
+                    @for(option of chatService.modelList;track $index){
+                    <option [ngClass]="[option.tag]" [value]="option.id" [disabled]="!option.isEnable">
+                        {{option.tag}}：{{option.id}}</option>
+                    }
+                </select>
+            </div>
+        </div>
+        @if(systemPrompt&&systemPrompt!==staticMessageList[0].systemPrompt){
+        <h4>AIへの指示</h4>
+        <div [innerHTML]="systemPrompt|newlineToBr"></div>
+        }
+        <div class="input-area relative">
+            <!-- <label for="user-input"></label> -->
+            <textarea #textAreaElem rows="4" [placeholder]="placeholder" [(ngModel)]="inputText"
+                (keydown)="onKeyDown($event)"></textarea>
+            <button [disabled]="!inputText" style="width: 120px;position: absolute;right: 45px;bottom: 30px;"
+                color="primary" mat-fab extended (click)="submit()">
+                <mat-icon>send</mat-icon>送信
+            </button>
+        </div>
+        <a class="block text-right" href="./#/chat/">チャット画面へのリンク</a>
+
+        <!-- <h1>Prompt Shortcuts</h1> -->
+        <h1>定型文</h1>
+        <div class="button-group">
+            @for(staticMessage of staticMessageList;track $index){
+            <button class="panel" (click)="setStatic(staticMessage)">{{staticMessage.label}}</button>
+            }
+        </div>
+
+        @for(banner of bannerList;track $index){
+        <div class="banner">
+            <h1>{{banner.title}}</h1>
+            <p [innerHTML]="banner.body | newlineToBr"></p>
+        </div>
+        }
+
+        <!-- <h1>Recent Chats</h1> -->
+        @if(threadGroupList.length>0){
+        <h1>チャット履歴</h1>
+        <div class="recent-chats">
+            @for(thread of threadGroupList;track $index){
+            @if(maxDisplay > $index || showRecentChats){
+            <a class="panel chat-item" [routerLink]="['/chat', thread.projectId,thread.id]">
+                <h3>{{thread.title}}</h3>
+                <p>{{thread.description}}</p>
+                <p>最終利用: {{ thread.updatedAt|relativeTime}}</p>
+            </a>
+            }
+            }
+        </div>
+        @if(threadGroupList.length > 6){
+        <button class="panel mt-5 w-full" (click)="toggleRecentChats()">
+            {{ showRecentChats ? '隠す' : 'もっと見る' }}
+        </button>
+        }
+        }
+
+        <!-- <h1>Prompt Shortcuts</h1> -->
+        <h1>API連携</h1>
+        <div class="button-group">
+            @for(group of curEnv.oAuthProviders;track $index){
+            @for(provider of group.providers;track $index){
+            <a class="panel chat-item w-full" [routerLink]="['/'+group.value+(provider.id?'-'+provider.id:'')]">
+                <h3><img src="./image/{{group.value}}-logo.svg" style="width: 80px;height: 80px;">{{group.label}}</h3>
+                <p>{{provider.describe}}</p>
+            </a>
+            }
+            }
+        </div>
+
+        <h1>プロジェクト</h1>
+        <!-- <h1>Projects</h1> -->
+        <div class="recent-chats">
+            @if(defaultProject){
+            <a class="panel chat-item" [routerLink]="['/chat', defaultProject.id]">
+                <div>
+                    <p>[個人用]</p>
+                    <h3>デフォルト</h3>
+                    <p>【編集不可】個人用のデフォルトプロジェクト。</p>
+                </div>
+                <p>最終利用: {{defaultProject.updatedAt|relativeTime}}</p>
+            </a>
+            }
+            @for(project of projectWithoutDefaultList;track $index){
+            <a class="panel chat-item" [routerLink]="['/chat', project.id]">
+                <div>
+                    <p>[{{teamMap[project.teamId].label
+                        ==='Alone'?'個人用':teamMap[project.teamId].label}}]</p>
+                    <h3>{{project.label}}</h3>
+                    <p>{{project.description}}</p>
+                </div>
+                <p>最終利用: {{ project.updatedAt|relativeTime}}</p>
+            </a>
+            }
+            <button class="panel chat-item" (click)="createProject()">新規作成</button>
+        </div>
+        <h1>チーム</h1>
+        <!-- <h1>Projects</h1> -->
+        <div class="recent-chats">
+            @for(team of teamWithoutAloneList;track $index){
+            <a class="panel chat-item" [routerLink]="['/team', team.id]">
+                <h3>{{team.label}}</h3>
+                <p>{{team.description}}</p>
+                <!-- <p>最終利用: {{ team.updatedAt|relativeTime}}</p> -->
+            </a>
+            }
+            <button class="panel chat-item" [routerLink]="['/team', 'new-team']">新規作成</button>
+        </div>
+    </div>
+</div>
+<app-user-mark></app-user-mark>

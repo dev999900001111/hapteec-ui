@@ -1,0 +1,140 @@
+:host {
+    ::ng-deep {
+        .mat-expansion-panel.message .mat-expansion-panel-header-title {
+            width: 346px;
+        }
+    }
+}
+
+.tip {
+    font-size: 11px;
+    padding: 1px 10px 0 10px;
+    border-radius: 31px;
+    line-height: 14px;
+    height: 14px;
+
+    &.賢い {
+        color: #eee;
+        background-color: #69b8cd;
+        background: linear-gradient(-135deg, rgb(30, 109, 131), #19393b);
+        /* background: linear-gradient(135deg, rgb(105, 184, 205), rgb(125, 200, 215), rgb(143, 211, 223), rgb(162, 222, 230), rgb(183, 235, 240)); */
+    }
+
+    &.古い {
+        color: #eee;
+        background: linear-gradient(90deg, #333, #999);
+    }
+
+    &.速い {
+        color: #333;
+        background: linear-gradient(90deg, #d9d9d9, #b0b0b0);
+    }
+
+    &.実験,
+    &.独特 {
+        color: #333;
+        background: linear-gradient(90deg, #87ceeb, #4682b4);
+
+    }
+
+}
+
+
+.accordion {
+    mat-expansion-panel {
+        background: linear-gradient(135deg,
+                #0a0a0a 0%,
+                #1a1a1a 100%);
+    }
+
+    button {
+        padding: 10px 20px;
+        border-radius: 5px;
+        border: none;
+        background-color: #666666;
+        color: #ffffff;
+        font-size: 16px;
+        cursor: pointer;
+        transition: all 0.2s ease-in-out;
+    }
+
+    button:hover {
+        background-color: #222;
+    }
+
+    .group-check-container {
+        position: absolute;
+        left: -10px;
+        top: -10px;
+        z-index: 1;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 34px;
+        height: 34px;
+    }
+
+    .group-check {
+        position: relative;
+        cursor: pointer;
+        opacity: 0;
+        color: #000;
+        background-color: transparent;
+        border: 2px solid #ccc;
+        border-radius: 30px;
+        width: 0;
+        height: 0;
+        font-size: 32px;
+        /* filter: blur(50px); */
+        transform: scale(0, 0);
+        transform-origin: 50% 50%;
+        transition: all 0.2s 0s ease-in-out;
+
+        transform: scale(1, 1);
+        opacity: 1;
+        width: 34px;
+        height: 34px;
+    }
+
+    .group-check-bar,
+    .group-check-checked {
+        transform: scale(1, 1);
+        background-color: #69b8cd;
+        border: 2px solid #69b8cd;
+        /* color: #00dddd; */
+        /* opacity: 1; */
+        filter: blur(0);
+        width: 34px;
+        height: 34px;
+    }
+
+    // ::ng-deep {
+    //     .mat-expansion-panel[ng-reflect-disabled="true"] {
+    //         mat-icon {
+    //             opacity: 0.5;
+    //         }
+
+    //         img {
+    //             opacity: 0.5;
+    //         }
+    //     }
+    // }
+}
+
+.mat-accordion.accordion.disabled{
+  opacity: 0.5;
+}
+
+
+.tooltip-small-tag {
+  width: 16px;
+  height: 16px;
+
+  background: linear-gradient(
+    135deg,
+    #e5e5e5 0%,
+    #d5d5d5 100%);
+  padding: 1px;
+  margin: 0;
+  border-radius: 4px;
+}

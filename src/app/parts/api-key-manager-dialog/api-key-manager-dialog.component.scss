@@ -1,0 +1,27 @@
+:host {
+    ::ng-deep {
+        .mat-mdc-notch-piece.mdc-notched-outline__notch {
+            border-right: none;
+        }
+
+        mat-card-title {
+            margin-bottom: 20px;
+        }
+
+        .custom-scroll>table>thead{
+            position: sticky;
+            top: 0;
+            background: #101414;
+            z-index: 1;
+            border-bottom: 1px solid white;
+        }
+    }
+}
+
+.container {
+    padding: 2rem;
+}
+
+.mat-mdc-card {
+    background-color: #2b2b2b;
+}
