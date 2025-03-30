@@ -17,7 +17,7 @@ export const environment = {
         { id: '', label: '', describe: ``, href: 'https://sample.atlassian.net/jira/' },
       ],
     },
-  ],
+  ] as { value: string, label: string, providers: { id: string, label: string, describe: string, href?: string }[] }[],
   oAuthProviders: [
     {
       value: 'mattermost', label: 'Mattermost',
@@ -43,5 +43,5 @@ export const environment = {
         { id: 'local', label: 'gitlab-local', describe: '【工事中】 gitlabとデータ連携します。\n※特に機能はありません。' },
       ],
     },
-  ],
+  ] as { value: string, label: string, group?: string, providers: { id: string, label: string, describe: string }[] }[],
 };
