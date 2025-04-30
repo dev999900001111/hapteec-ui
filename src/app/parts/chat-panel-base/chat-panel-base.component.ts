@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { AfterViewChecked, ChangeDetectorRef, Component, ElementRef, Input, OnInit, ViewChild, ViewEncapsulation, effect, inject, input, output, viewChild } from '@angular/core';
+import { AfterViewChecked, ChangeDetectorRef, Component, ElementRef, Input, OnInit, ViewChild, ViewEncapsulation, computed, effect, inject, input, output, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatIconModule } from '@angular/material/icon';
@@ -17,7 +17,7 @@ import { saveAs } from 'file-saver'; // Blobファイルのダウンロードの
 import { MessageService } from './../../services/project.service';
 import { ChatService } from '../../services/chat.service';
 import { DomUtils, safeForkJoin } from '../../utils/dom-utils';
-import { ContentPart, ContentPartType, MessageForView, MessageGroupForView, Project } from '../../models/project-models';
+import { ContentPart, ContentPartType, MessageForView, MessageGroupForView, Project, Thread } from '../../models/project-models';
 import { Utils } from '../../utils';
 import { MatMenuModule } from '@angular/material/menu';
 import { ToolCallPart, ToolCallPartBody, ToolCallPartCommand, ToolCallPartCommandBody, ToolCallPartInfo, ToolCallPartType, ToolCallSet } from '../../services/tool-call.service';
@@ -26,6 +26,7 @@ import { ToolCallCallResultDialogComponent } from '../tool-call-call-result-dial
 import { MatTabsModule } from '@angular/material/tabs';
 import { UserService } from '../../services/user.service';
 import { MarkdownService } from 'ngx-markdown';
+import { ChatPanelZoomDialogComponent } from '../chat-panel-zoom-dialog/chat-panel-zoom-dialog.component';
 
 
 @Component({
@@ -53,6 +54,7 @@ export class ChatPanelBaseComponent implements OnInit {
 
   // @Input() // status 0:未開始 1:実行中 2:完了
   // message!: MessageForView;
+  readonly thread = input.required<Thread>();
 
   readonly messageGroup = input.required<MessageGroupForView>();
 
@@ -84,6 +86,7 @@ export class ChatPanelBaseComponent implements OnInit {
 
   readonly effectBitCounter = effect(() => {
     this.bitCounter();
+    this.setMessageIndex(this.mIndex); // これが無いと復旧したときのmessageの実体が反映しない
     const content = (this.messageGroup().messages[0].contents.find(content => content.type === 'text') as OpenAI.ChatCompletionContentPartText);
     if (this.beforeText === content?.text) {
       // 変更なければ何もしない
@@ -91,12 +94,20 @@ export class ChatPanelBaseComponent implements OnInit {
       // 変更あればスクロール
       setTimeout(() => this.scroll(), 1);
       this.beforeText = content?.text;
+      this.cdr.detectChanges();
     }
   });
+
+  readonly viewModel = computed(() => ({
+    messageGroup: this.messageGroup(),
+    thread: this.thread()
+  }));
 
   readonly editEmitter = output<MessageGroupForView>({ alias: 'edit' });
 
   readonly removeEmitter = output<MessageGroupForView>({ alias: 'remove' });
+
+  readonly cancelEmitter = output<MessageGroupForView>({ alias: 'cancel' });
 
   readonly toolExecEmitter = output<{ contentPart: ContentPart, toolCallPartCommandList: ToolCallPartCommand[] }>({ alias: 'toolExec' });
 
@@ -116,7 +127,6 @@ export class ChatPanelBaseComponent implements OnInit {
 
   isLoading = false;
 
-  isExecuted = false;
   isInteractive(): boolean {
     // TODO ここは遅くなる元なのであってはならない。
     let flag = false;
@@ -124,14 +134,37 @@ export class ChatPanelBaseComponent implements OnInit {
       .map(message => message.contents.filter(content => content.type === 'tool'))
       .forEach(contents => {
         if (contents.length === 0) return;
+        try {
         const toolCallList = JSON.parse(contents[contents.length - 1].text || '[]') as ToolCallSet[];
-        if (toolCallList[0].info.isInteractive && toolCallList[0].commandList.length === 0) {
-          flag = true;
-        } else {/** 指示不要、もしくは実行済み */ }
+          flag = flag || !!toolCallList.find(toolCall => toolCall.info.isInteractive && toolCall.commandList.length === 0 && !this.executedToolCallIdSet.has(toolCall.toolCallId));
+        } catch (err) {
+          // JSON parse失敗したら無視
+          console.log(contents[contents.length - 1].text);
+          console.log('JSON parse error', err);
+        }
       });
     // console.log(flag);
-    return (!this.isExecuted && flag) ? true : false;
+    return flag;
   }
+
+  executedToolCallIdSet: Set<string> = new Set<string>();
+  toolExec($event: MouseEvent, flag: boolean, content?: ContentPart): void {
+    $event.stopImmediatePropagation();
+    $event.preventDefault();
+    if (content && content.type === 'tool') {
+      try {
+        const toolCallPartCommandList = (JSON.parse(content.text || '[]') as ToolCallSet[])
+          .filter(tc => tc.info && tc.info.isInteractive && !this.executedToolCallIdSet.has(tc.toolCallId))
+          .map(tc => ({ type: ToolCallPartType.COMMAND, body: { command: flag ? 'execute' : 'cancel' }, toolCallId: tc.toolCallId })) as ToolCallPartCommand[];
+        // 実行/キャンセルに関わらず、指示済みのものはリストに追加
+        toolCallPartCommandList.forEach(tc => this.executedToolCallIdSet.add(tc.toolCallId));
+        this.toolExecEmitter.emit({ contentPart: content, toolCallPartCommandList });
+      } catch (err) {
+        console.log('toolExec error', err);
+      }
+    } else { }
+  }
+
   jsonParseToArray(text: string): any[] {
     const obj = JSON.parse(text || '[]') as any[];
     return Array.isArray(obj) ? obj : [];
@@ -318,18 +351,12 @@ export class ChatPanelBaseComponent implements OnInit {
     // }
     this.removeEmitter.emit(this.messageGroup());
   }
-
-  toolExec($event: MouseEvent, flag: boolean, content?: ContentPart): void {
+  cancel($event: MouseEvent): void {
     $event.stopImmediatePropagation();
     $event.preventDefault();
-    if (content) {
-      this.isExecuted = true;
-      const toolCallPartCommandList = (JSON.parse(content.text || '[]') as ToolCallSet[])
-        .filter(tc => tc.info && tc.info.isInteractive)
-        .map(tc => ({ type: ToolCallPartType.COMMAND, body: { command: flag ? 'execute' : 'cancel' }, toolCallId: tc.toolCallId })) as ToolCallPartCommand[];
-      this.toolExecEmitter.emit({ contentPart: content, toolCallPartCommandList });
-    } else { }
+    this.cancelEmitter.emit(this.messageGroup());
   }
+
   timeoutId: any;
   onKeyDown($event: KeyboardEvent): void {
     if ($event.key === 'Enter') {
@@ -378,6 +405,24 @@ export class ChatPanelBaseComponent implements OnInit {
     this.messageGroup().messages.forEach(message => message.editing = 0);
   }
 
+  onZoom($event: MouseEvent): void {
+    $event.stopImmediatePropagation();
+    $event.preventDefault();
+    if (this.messageGroup().messages.length > 0 && this.messageGroup().messages[0].contents.length > 0) {
+      this.dialog.open(ChatPanelZoomDialogComponent, {
+        data: { messageGroup: this.messageGroup() }
+      });
+    } else {
+      this.loadContent(false).subscribe({
+        next: contentsList => {
+          this.dialog.open(ChatPanelZoomDialogComponent, {
+            data: { messageGroup: this.messageGroup() }
+          });
+        }
+      });
+    }
+  }
+
   setEdit($event: MouseEvent): void {
     $event.stopImmediatePropagation();
     $event.preventDefault();
@@ -407,7 +452,7 @@ export class ChatPanelBaseComponent implements OnInit {
     return result;
   }
 
-  loadContent(): Observable<ContentPart[][]> {
+  loadContent(autoOpenPanel: boolean = true): Observable<ContentPart[][]> {
     const messageGroup = this.messageGroup();
     return safeForkJoin(
       messageGroup.messages.map(message => {
@@ -423,7 +468,9 @@ export class ChatPanelBaseComponent implements OnInit {
               message.contents = contents;
               this.setBrackets();
               this.isLoading = false;
+              if (autoOpenPanel) {
               this.exPanel().open();
+              } else { }
             }),
           );
         } else {
@@ -447,16 +494,21 @@ export class ChatPanelBaseComponent implements OnInit {
   }
 
   convertSvgToImage() {
+
     const container = this.textBodyElem()?.nativeElement;
-    if (container) {
-      const svgs = container.querySelectorAll('code.language-svg,code.language-xml,code.language-html,language-markdown');
+    if (container && !['Loading'].includes(this.message.status)) {
+      const svgs = container.querySelectorAll('code.language-svg,code.language-xml,code.language-markdown');
       svgs.forEach(_svg => {
         const svg = (_svg as HTMLPreElement);
-        const textContent = svg.textContent || '';
-        if (textContent.startsWith('<svg')) {
+        let textContent = svg.textContent || '';
+        if (/<svg[\s>]/i.test(textContent)) {
+          if (!textContent.includes('xmlns=')) {
+            textContent = textContent.replace('>', ' xmlns="http://www.w3.org/2000/svg">');
+          } else { }
+
           // SVGをData URIに変換
           // const xml = new XMLSerializer().serializeToString(svg);
-          const svg64 = btoa(unescape(encodeURIComponent(svg.textContent || '')));
+          const svg64 = Utils.toBase64(textContent || '');
           const image64 = 'data:image/svg+xml;base64,' + svg64;
 
           // 新しい<img>要素を作成
@@ -477,6 +529,52 @@ export class ChatPanelBaseComponent implements OnInit {
           // svg.parentNode?.replaceChild(img, svg);
         } else { }
       });
+      const html = container.querySelectorAll('code.language-html');
+      html.forEach(_html => {
+        const html = (_html as HTMLPreElement);
+        const textContent = html.textContent || '';
+        if (/<html[\s>]/i.test(textContent)) {
+          // iframe要素を作成
+          const iframe = document.createElement('iframe');
+          iframe.srcdoc = html.textContent || '';
+          iframe.width = '100%';
+          iframe.style.border = 'none';
+          iframe.style.backgroundColor = 'white';
+          const maxHeight = 800;
+
+          // iframeのload時にheightを調整する関数を設定
+          iframe.onload = () => {
+            try {
+              // iframeのコンテンツの高さを取得して設定
+              const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+              if (iframeDoc) {
+                // スクロール高さを取得
+                const height = Math.min(iframeDoc.documentElement.scrollHeight, maxHeight);
+                iframe.height = `${height}px`;
+
+                // リサイズイベントを監視して高さを再調整（レスポンシブ対応）
+                const resizeObserver = new ResizeObserver(() => {
+                  const newHeight = Math.min(iframeDoc.documentElement.scrollHeight, maxHeight);
+                  iframe.height = `${newHeight}px`;
+                });
+                resizeObserver.observe(iframeDoc.body);
+              }
+            } catch (e) {
+              console.error('iframe height adjustment failed:', e);
+              // エラー時はデフォルト高さを設定
+              iframe.height = '500px';
+            }
+          };
+
+          // 元のHTML要素を非表示にする
+          html.style.display = 'block';
+          html.style.height = '0';
+          html.style.width = '0';
+          html.style.overflow = 'hidden';
+          html.parentNode?.appendChild(iframe);
+        }
+      });
+
     } else { }
   }
 

@@ -241,6 +241,7 @@ export interface BaseEntity {
     createdAt: Date;
     updatedAt: Date;
 }
+export type BaseEntityFields = keyof BaseEntity;
 
 export interface Team extends BaseEntity {
     name: string;
@@ -295,6 +296,7 @@ export interface MessageGroup extends BaseEntity {
     type: MessageGroupType; // Single, Parallel, Regenerated
     seq: number;
     role: OpenAI.ChatCompletionRole;
+    source?: 'user' | string;
     // label: string;
     previousMessageGroupId?: UUID;
     // editedRootMessageGroupId?: UUID;
@@ -324,6 +326,7 @@ export enum MessageStatusType {
     Waiting = 'Waiting', // AI自動生成開始待ち
     Loading = 'Loading', // AI自動生成中
     Loaded = 'Loaded', // 通常
+    Canceled = 'Canceled', // キャンセル
     // Error = 'Error',
     // Deleted = 'Deleted',
 }

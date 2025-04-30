@@ -1,5 +1,5 @@
-import { ChangeDetectorRef, Component, ElementRef, NgZone, OnInit, QueryList, TemplateRef, inject, viewChildren, viewChild } from '@angular/core';
-import { FormsModule, NgModel } from '@angular/forms';
+import { ChangeDetectorRef, Component, ElementRef, NgZone, OnInit, QueryList, TemplateRef, inject, viewChildren, viewChild, Input } from '@angular/core';
+import { FormBuilder, FormGroup, FormsModule, NgModel, ReactiveFormsModule, Validators } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, NavigationEnd, Router, RouterModule } from '@angular/router';
 import OpenAI from 'openai';
@@ -27,9 +27,9 @@ import { saveAs } from 'file-saver';
 
 import { ChatPanelMessageComponent } from '../../parts/chat-panel-message/chat-panel-message.component';
 import { FileEntity, FileManagerService, FileUploadContent, FullPathFile } from './../../services/file-manager.service';
-import { genDummyId, MessageService, ProjectService, TeamService, ThreadService } from './../../services/project.service';
+import { genDummyId, genInitialBaseEntity, MessageService, ProjectService, TeamService, ThreadService } from './../../services/project.service';
 import { CachedContent, GPTModels, SafetyRating, safetyRatingLabelMap } from '../../models/models';
-import { ChatContent, ChatInputArea, ChatService, CountTokensResponse, PresetDef } from '../../services/chat.service';
+import { ChatContent, ChatInputArea, ChatService, CountTokensResponse, CountTokensResponseForView, PresetDef } from '../../services/chat.service';
 import { FileDropDirective } from '../../parts/file-drop.directive';
 import { NgxIndexedDBService } from 'ngx-indexed-db';
 import { Observable, tap, toArray } from 'rxjs';
@@ -37,7 +37,7 @@ import { DomUtils, safeForkJoin } from '../../utils/dom-utils';
 import { DocTagComponent } from '../../parts/doc-tag/doc-tag.component';
 import { AuthService } from '../../services/auth.service';
 import { DialogComponent } from '../../parts/dialog/dialog.component';
-import { BaseEntity, ContentPart, ContentPartType, Message, MessageClusterType, MessageForView, MessageGroup, MessageGroupForView, MessageGroupType, MessageStatusType, Project, ProjectVisibility, Team, TeamType, Thread, ThreadGroup, ThreadGroupType, ThreadGroupVisibility, UUID } from '../../models/project-models';
+import { BaseEntity, ContentPart, ContentPartType, Message, MessageClusterType, MessageForView, MessageGroup, MessageGroupForView, MessageGroupType, MessageStatusType, Project, ProjectVisibility, Team, TeamForView, TeamType, Thread, ThreadGroup, ThreadGroupType, ThreadGroupVisibility, UUID } from '../../models/project-models';
 import { GService } from '../../services/g.service';
 import { UserMarkComponent } from "../../parts/user-mark/user-mark.component";
 import { BulkRunSettingComponent, BulkRunSettingData } from '../../parts/bulk-run-setting/bulk-run-setting.component';
@@ -48,6 +48,7 @@ import { UserService } from '../../services/user.service';
 import { AppMenuComponent } from '../../parts/app-menu/app-menu.component';
 import { ToolCallPart, ToolCallPartBody, ToolCallPartInfoBody, ToolCallPartCallBody, ToolCallPartCommandBody, ToolCallPartResultBody, ToolCallPartType, ToolCallPartInfo, ToolCallPartCall, ToolCallPartCommand, ToolCallPartResult, ToolCallService, MyToolType, } from '../../services/tool-call.service';
 import { ChatCompletionTool } from 'openai/resources/index.mjs';
+import { SaveThreadData, SaveThreadDialogComponent } from '../../parts/save-thread-dialog/save-thread-dialog.component';
 
 declare var _paq: any;
 
@@ -80,7 +81,6 @@ export class ChatComponent implements OnInit {
   readonly textBodyElem = viewChildren<ElementRef<HTMLDivElement>>('textBodyElem');
 
   // スクロール制御用のアンカー
-  readonly chatPanelGroupElem = viewChildren<ElementRef<HTMLDivElement>>('chatPanelGroupElem');
   readonly anchor = viewChildren<ElementRef<HTMLDivElement>>('anchor');
 
 
@@ -95,6 +95,9 @@ export class ChatComponent implements OnInit {
   // show
   messageGroupIdListMas: { [threadId: string]: string[] } = {};
 
+  templateThreadGroupList: ThreadGroup[] = [];
+  threadGroupListAll: ThreadGroup[] = [];
+
   // メッセージ一覧のインデックス。メッセージグループの数が最大のスレッドのメッセージグループ数を取得して、その数だけインデックスを作る。
   indexList = Array.from({ length: 0 }, (_, i) => i);
 
@@ -107,13 +110,15 @@ export class ChatComponent implements OnInit {
   defaultProject!: Project;
 
   selectedTeam!: Team;
+  teamList: Team[] = [];
   selectedProject!: Project;
   projectList: Project[] = [];
   teamMap: { [key: string]: Team } = {};
+  teamForViewList: TeamForView[] = [];
 
   placeholder = '';
   defaultPlaceholder = 'メッセージを入力...。Shift+Enterで改行。Ctrl+Enterで送信。Drag＆Drop、ファイル貼り付け。';
-  chatStreamSubscriptionList: { [threadGroupId: string]: Subscription[] } = {};
+  chatStreamSubscriptionList: { [threadGroupId: string]: { message: MessageForView, subscription: Subscription }[] } = {};
   cacheMap: { [key: string]: CachedContent } = {};
   editNameThreadId: string = '';
   private timeoutId: any;
@@ -139,7 +144,8 @@ export class ChatComponent implements OnInit {
   tailRole = 'system';
   cost: number = 0;
   charCount: number = 0;
-  tokenObj: CountTokensResponse = { totalTokens: 0, totalBillableCharacters: 0, text: 0, image: 0, audio: 0, video: 0 };
+  tokenObjSummary: CountTokensResponseForView = { id: 'Summary', totalTokens: 0, totalBillableCharacters: 0, text: 0, image: 0, audio: 0, video: 0, cost: 0, model: 'Summary' };
+  tokenObjList: CountTokensResponseForView[] = [];
   linkChain: boolean[] = [true]; // デフォルトはfalse
 
   readonly authService: AuthService = inject(AuthService);
@@ -166,6 +172,7 @@ export class ChatComponent implements OnInit {
     of(0).pipe(
       switchMap(() => this.loadTeams()),
       switchMap(() => this.loadProjects()),
+      switchMap(() => this.loadDefaultThreadGroup()),
     ).subscribe(ret => {
       this.routerChangeHandler();
     });
@@ -201,7 +208,8 @@ export class ChatComponent implements OnInit {
       data: {
         threadGroup: this.selectedThreadGroup,
       },
-    }).afterClosed().subscribe((result: ThreadGroup) => {
+    }).afterClosed().pipe(
+      switchMap((result: ThreadGroup) => {
       if (result) {
         // switchMap(() => safeForkJoin(
         //   this.selectedThreadGroup.threadList
@@ -211,31 +219,41 @@ export class ChatComponent implements OnInit {
         //     .map(thread => this.messageService.cloneThreadDry(this.selectedThreadGroup.threadList[0], thread.id))
         // )),
         this.modelCheck();
-        safeForkJoin(
+          return safeForkJoin(
           result.threadList
             // 既存スレッドの場合は何もしないので除外する
-            .filter(thread => !this.messageGroupIdListMas[thread.id])
+              .filter((thread, index) => index >= result.threadList.length)
             // 新規スレッドの場合は元スレッドをコピー
             .map(thread => this.messageService.cloneThreadDry(this.selectedThreadGroup.threadList[0], thread.id))
-        ).subscribe({
-          next: resDto => {
-            this.selectedThreadGroup = result;
-            this.rebuildThreadGroup();
-            this.onChange();
-          },
-          error: error => {
-            console.error(error);
-          },
-        });
+          ).pipe(map(() => {
+            return result;
+          }))
       } else {
         // キャンセルされた場合
+          return EMPTY;
       }
-    });
+      }),
+      tap(result => {
+        if (result) {
+          this.selectedThreadGroup = result;
+        } else { }
+      }),
+      switchMap((result: ThreadGroup | undefined, index: number) => {
+        return result ? this.loadThreadGroupAsDefault(result) : EMPTY;
+      }),
+      tap(result => {
+        if (result) {
+          this.rebuildThreadGroup();
+          this.onChange();
+        } else { }
+      }),
+    ).subscribe();
   }
 
   routerChangeHandler(): void {
     this.activatedRoute.params.subscribe(params => {
-      const { projectId, threadGroupId } = params as { projectId: string, threadGroupId: string };
+      const { projectId, threadGroupId, tabIndex } = params as { projectId: string, threadGroupId: string, tabIndex?: string };
+      this.tabIndex = tabIndex ? parseInt(tabIndex) : 0;
       const project = this.projectList.find(project => project.id === projectId);
 
       if (this.selectedProject === project) {
@@ -281,8 +299,8 @@ export class ChatComponent implements OnInit {
         isModelChange = true;
       } else { }
       const messageGroup = this.messageService.messageGroupMas[this.messageGroupIdListMas[thread.id][0]];
-      messageGroup.messages[0].contents[0].text = preset.systemPrompt || this.chatService.defaultSystemPrompt;
-      messageGroup.messages.forEach(message => message.label = preset.systemLabel || this.chatService.defaultSystemPrompt);
+      messageGroup.messages[0].contents[0].text = preset.systemPrompt || this.defaultSystemPromptList[tIndex] || this.defaultSystemPromptList[0];
+      messageGroup.messages.forEach(message => message.label = preset.systemLabel || this.defaultSystemPromptList[tIndex] || this.defaultSystemPromptList[0]);
       thread.inDto.args.tool_choice = preset.tool_choice || 'none';
 
       if (preset.tool_clear) {
@@ -318,7 +336,81 @@ export class ChatComponent implements OnInit {
     if (isModelChange) {
       this.modelCheck();
     }
+
+    this.onChange();
+    this.rebuildThreadGroup();
     setTimeout(() => { this.textAreaElem().nativeElement.focus(); }, 100);
+  }
+
+  selectTemplateThreadGroup(_templateThreadGroup: ThreadGroup): void {
+    const templateThreadGroup = Utils.clone(_templateThreadGroup) as ThreadGroup;
+    // TODO : threadGroupChangeHandlerと似たようなことやってるのでほんとは共通化したい。
+    this.presetLabel = templateThreadGroup.id;
+    this.selectedThreadGroup = templateThreadGroup;
+
+    if ((templateThreadGroup.threadList[0].inDto as any).inputArea) {
+      // inputAreaがある場合はそれを使う。
+      Object.assign(this.inputArea, (templateThreadGroup.threadList[0].inDto as any).inputArea);
+    } else { }
+
+    this.isThreadGroupLoading = true;
+
+    _paq.push(['trackEvent', 'AIチャット', 'テンプレート選択', templateThreadGroup.id]);
+    of(0).pipe(
+      // templateThreadGroupのメッセージリストをロードする
+      switchMap(() => this.messageService.getMessageGroupList(templateThreadGroup.id)),
+      // templateThreadGroupの中身をダミー（初期値）化
+      tap(resDto => {
+        templateThreadGroup.type = ThreadGroupType.Normal; // テンプレートから通常スレッドに変更
+        templateThreadGroup.title = '';
+        templateThreadGroup.description = '';
+        templateThreadGroup.id = genDummyId('threadGroup');
+        templateThreadGroup.threadList.forEach(thread => {
+          thread.threadGroupId = templateThreadGroup.id;
+        });
+        // スレッドグループの初期化（各種マスタを整備）
+        this.messageService.initThreadGroup(resDto.messageGroups)
+      }),
+      // スレッドをクローン
+      switchMap(res => safeForkJoin(templateThreadGroup.threadList.map(thread => this.messageService.cloneThreadDry(thread)))),
+      tap(resDto => {
+
+        this.selectedThreadGroup.threadList = resDto;
+
+        // console.log(resDto);
+        this.rebuildThreadGroup();
+
+        // linkChainの設定
+        this.messageGroupIdListMas[this.selectedThreadGroup.threadList[0].id].forEach((messageGroupId, index) => {
+          this.linkChain[index] = this.messageService.messageGroupMas[messageGroupId].role !== 'assistant';
+        });
+
+        // 5件以上だったら末尾2件を開く。5件未満だったら全部開く。
+        // this.allExpandCollapseFlag = this.messageList.length < 5;
+        this.allExpandCollapseFlag = this.messageGroupIdListMas[this.selectedThreadGroup.threadList[0].id].length < 5;
+
+        // 末尾1件を開く。
+        this.selectedThreadGroup.threadList.map(thread => this.messageGroupIdListMas[thread.id]
+          .slice().reverse().filter((messageGroupId, index) => index < 1 && this.messageService.messageGroupMas[messageGroupId].role !== 'system') // システムプロンプトは開かない。
+          .forEach((messageGroupId, index) => this.messageService.messageGroupMas[messageGroupId].isExpanded = true)
+        );
+
+        this.isThreadGroupLoading = false;
+
+        this.onChange();
+        this.rebuildThreadGroup();
+        setTimeout(() => { this.textAreaElem().nativeElement.focus(); }, 100);
+
+        document.title = `AI : ${this.selectedThreadGroup?.title || '(no title)'}`;
+
+        this.cdr.detectChanges();
+      }),
+      catchError(error => {
+        this.isThreadGroupLoading = false;
+        console.error(error);
+        return EMPTY;
+      }),
+    ).subscribe();
   }
 
   modelCheck(modelList: string[] = []): void {
@@ -350,12 +442,14 @@ export class ChatComponent implements OnInit {
   threadGroupChangeHandler(project: Project, threadGroupList: ThreadGroup[], threadGroupId: string): void {
     let noSend = true;
     if (threadGroupId === 'new-thread') {
+      this.presetLabel = '通常';
       this.messageService.clear(); // ストック情報を全消ししておく。
       document.title = `AI: new thread`;
       // 新規スレッド作成
+
       this.selectedThreadGroup = this.threadService.genInitialThreadGroupEntity(this.selectedProject.id);
-      this.selectedThreadGroup.threadList.forEach(thread => {
-        const contentPart = this.messageService.initContentPart(genDummyId(), this.chatService.defaultSystemPrompt);
+      this.selectedThreadGroup.threadList.forEach((thread, index) => {
+        const contentPart = this.messageService.initContentPart(genDummyId('contentPart'), this.defaultSystemPromptList[index] || this.defaultSystemPromptList[0]);
         this.messageService.addSingleMessageGroupDry(thread.id, undefined, 'system', [contentPart]);
       });
 
@@ -367,7 +461,7 @@ export class ChatComponent implements OnInit {
         this.messageService.cloneThreadDry(baseThread),
       ]).subscribe({
         next: next => {
-          (['gpt-4o', 'claude-3-7-sonnet@20250219', 'gemini-2.0-flash-exp'] as GPTModels[]).forEach((model, index) => {
+          (['gpt-4o', 'claude-3-7-sonnet-20250219', 'gemini-2.0-flash-exp'] as GPTModels[]).forEach((model, index) => {
             next[index].inDto.args.model = model;
           });
           this.presetThreadList = next;
@@ -423,8 +517,8 @@ export class ChatComponent implements OnInit {
           this.selectedThreadGroup = threadGroup;
           this.isThreadGroupLoading = true;
 
-          // ちょっとご茶ついてるから直さないとダメかも。。cloneThreadDryの後に ).flat().flat().filter(message => message.contents.length === 0).map(message => this.messageService.getMessageContentParts(message)) はなんか違和感がある。
-          this.messageService.initThreadGroup(threadGroup.id).pipe(
+          // ちょっとごちゃついてるから直さないとダメかも。。cloneThreadDryの後に ).flat().flat().filter(message => message.contents.length === 0).map(message => this.messageService.getMessageContentParts(message)) はなんか違和感がある。
+          this.messageService.loadAndInitThreadGroup(threadGroup.id).pipe(
             switchMap(() => safeForkJoin(
               this.selectedThreadGroup.threadList
                 // 既存スレッドの場合は何もしないので除外する
@@ -445,8 +539,9 @@ export class ChatComponent implements OnInit {
               // this.allExpandCollapseFlag = this.messageList.length < 5;
               this.allExpandCollapseFlag = this.messageGroupIdListMas[this.selectedThreadGroup.threadList[0].id].length < 5;
 
+              // 末尾1件を開く。
               this.selectedThreadGroup.threadList.map(thread => this.messageGroupIdListMas[thread.id]
-                .slice().reverse().filter((messageGroupId, index) => index < 2 && this.messageService.messageGroupMas[messageGroupId].role !== 'system') // システムプロンプトは開かない。
+                .slice().reverse().filter((messageGroupId, index) => index < 1 && this.messageService.messageGroupMas[messageGroupId].role !== 'system') // システムプロンプトは開かない。
                 .forEach((messageGroupId, index) => this.messageService.messageGroupMas[messageGroupId].isExpanded = true)
               );
               this.cdr.detectChanges();
@@ -463,28 +558,23 @@ export class ChatComponent implements OnInit {
             // )),
             tap(tapRes => {
 
-              let isExist = false;
               // 実行中のメッセージがあったら復旧する
               Object.keys(this.messageGroupIdListMas).forEach(threadId => {
                 this.messageGroupIdListMas[threadId].forEach(messageGroupId => {
-                  if (this.messageService.messageGroupMas[messageGroupId]) {
-                    const message = this.messageService.messageGroupMas[messageGroupId].messages.at(-1)!;
-                    const resDto = this.chatService.getObserver(message.id);
-                    if (resDto && resDto.observer) {
-                      // 別ページから復帰した場合に再開する。
-                      message.contents[0].text = resDto.text;
-                      this.chatStreamSubscriptionList[threadGroup.id] = this.chatStreamSubscriptionList[threadGroup.id] || [];
-                      this.chatStreamSubscriptionList[threadGroup.id].push(resDto.observer.subscribe(this.chatStreamHander(message)));
-                      isExist = true;
+                  const messageGroup = this.messageService.messageGroupMas[messageGroupId];
+                  if (messageGroup) {
+                    const message = messageGroup.messages.at(-1)!;
+                    if (this.chatStreamSubscriptionList[threadGroup.id]) {
+                      const existMessage = this.chatStreamSubscriptionList[threadGroup.id].find(sub => sub.message.id === message.id);
+                      if (existMessage) {
+                        messageGroup.messages[messageGroup.messages.length - 1] = existMessage.message;
+                        existMessage.message.status = MessageStatusType.Loading; // ステータス再設定は不要のはずだが、、何故か反映しないので強制で戻す。
+                      } else { }
                     } else { }
                   } else { }
                 });
               });
 
-              if (isExist) {
-              } else {
-                this.onChange();
-              }
               this.isThreadGroupLoading = false;
 
               // 一番下まで下げる
@@ -494,6 +584,8 @@ export class ChatComponent implements OnInit {
               setTimeout(() => { this.textAreaElem().nativeElement.focus(); }, 100);
 
               document.title = `AI : ${this.selectedThreadGroup?.title || '(no title)'}`;
+
+              this.onChange();
             }),
           ).subscribe({
             next: next => {
@@ -534,15 +626,18 @@ export class ChatComponent implements OnInit {
       });
       // ノーマルスレッドグループだけ持ってくる
       const _threadGroupList = this.sortThreadGroup(threadGroupList).filter(threadGroup => threadGroup.type === ThreadGroupType.Normal);
-      const mergedUsers = _threadGroupList.map(newObj => {
+      this.threadGroupListAll = threadGroupList;
+      this.templateThreadGroupList = threadGroupList.filter(threadGroup => threadGroup.type === ThreadGroupType.Template).sort((a, b) => a.title.localeCompare(b.title));;
+      this.threadGroupList = [];
+      _threadGroupList.map(newObj => {
         const oldObj = this.threadGroupList.find(oldObj => oldObj.id === newObj.id); // idでマッチする詳細を検索
         if (oldObj) {
           Object.assign(oldObj, newObj);
         } else {
           this.threadGroupList.push(newObj);
-          this.threadGroupList = [...this.threadGroupList];
         }
       });
+      this.threadGroupList = [...this.threadGroupList];
     }));
   }
 
@@ -552,16 +647,80 @@ export class ChatComponent implements OnInit {
         this.projectList = projectList;
         // guardが掛かっているので必ずある
         this.defaultProject = projectList.find(project => project.visibility === ProjectVisibility.Default) as Project;
+
+        const tmpTeamMapas: { [teamId: string]: TeamForView } = {};
+        this.teamForViewList = [];
+        projectList.map(project => {
+          const team = tmpTeamMapas[project.teamId];
+          if (team) {
+            team.projects.push(project);
+          } else {
+            tmpTeamMapas[project.teamId] = this.teamMap[project.teamId] as TeamForView;
+            tmpTeamMapas[project.teamId].projects = [project];
+            this.teamForViewList.push(tmpTeamMapas[project.teamId]);
+          }
+        });
       }));
   }
 
   loadTeams(): Observable<Team[]> {
     return this.teamService.getTeamList().pipe(
       tap(teamList => {
+        this.teamList = teamList;
         // guardが掛かっているので必ずある
         this.aloneTeam = teamList.find(team => team.teamType === TeamType.Alone) as Team;
         this.teamMap = Object.fromEntries(teamList.map(team => [team.id, team]));
       })
+    );
+  }
+
+  defaultSystemPromptList: string[] = [];
+  loadDefaultThreadGroup(): Observable<string[]> {
+    return of(0).pipe(
+      switchMap(() => {
+        return (this.selectedProject && this.defaultProject.id === this.selectedProject.id
+          ? of(this.threadGroupListAll)
+          : this.threadService.getThreadGroupList(this.defaultProject.id)
+        )
+      }),
+      switchMap(threadGroupList => {
+        const deafultThreadGroup = threadGroupList.filter(threadGroup => threadGroup.type === ThreadGroupType.Default);
+        if (deafultThreadGroup && deafultThreadGroup.length > 0) {
+          return this.loadThreadGroupAsDefault(deafultThreadGroup[0]);
+        } else {
+          return of([this.chatService.defaultSystemPrompt]);
+        }
+      }),
+    );
+  }
+
+  loadThreadGroupAsDefault(deafultThreadGroup: ThreadGroup): Observable<string[]> {
+    const threadIdList = deafultThreadGroup.threadList.map(thread => thread.id);
+    const defaultSystemPromptMap: { [threadId: string]: string } = {};
+    return of(0).pipe(
+      // メッセージグループを取得する
+      switchMap(() => this.messageService.getMessageGroupList(deafultThreadGroup.id)),
+      switchMap(resDto => {
+        // コンテンツパーツが取得できていないかもしれないので取り直し。
+        const loadTargetMessageList = resDto.messageGroups.map(messageGroup => messageGroup.messages.filter(message => !message.contents)).flat();
+        return safeForkJoin(loadTargetMessageList.map(message => this.messageService.getMessageContentParts(message))).pipe(map(() => resDto));
+      }),
+      tap(resDto => {
+        resDto.messageGroups.forEach(messageGroup => {
+          defaultSystemPromptMap[messageGroup.threadId] = defaultSystemPromptMap[messageGroup.threadId] || '';
+          defaultSystemPromptMap[messageGroup.threadId] += messageGroup.messages.map(message => {
+            return message.contents.map(content => {
+              return content.type === ContentPartType.TEXT ? content.text : ''
+            }).join('');
+          }).join('');
+          return defaultSystemPromptMap[messageGroup.threadId];
+        });
+      }),
+      map(resDto => {
+        // システムプロンプトを設定
+        this.defaultSystemPromptList = threadIdList.map(threadId => defaultSystemPromptMap[threadId] || this.chatService.defaultSystemPrompt);
+        return this.defaultSystemPromptList;
+      }),
     );
   }
 
@@ -587,14 +746,23 @@ export class ChatComponent implements OnInit {
     }));
   }
 
-  cloneThreadGroup(threadGroupId: string) {
-    this.isThreadGroupLoading = true
-    this.threadService.cloneThreadGroup(threadGroupId).subscribe({
+  cloneThreadGroup($event: Event, threadGroupId: string) {
+    // this.stopPropagation($event);
+    this.isThreadGroupLoading = true;
+    const threadGroup = this.threadGroupListAll.find(threadGroup => threadGroup.id === threadGroupId)!;
+    const { title, type, description } = threadGroup;
+    this.threadService.cloneThreadGroup(threadGroupId, { title: `Copy of ${title}`, type, description }).subscribe({
       next: threadGroup => {
+        this.isThreadGroupLoading = false;
+        this.threadGroupListAll.unshift(threadGroup);
+        if (threadGroup.type === ThreadGroupType.Normal) {
         this.threadGroupList.unshift(threadGroup);
         this.threadGroupList = [...this.threadGroupList];
         this.sortThreadGroup(this.threadGroupList);
-        this.isThreadGroupLoading = false;
+        } else if (threadGroup.type === ThreadGroupType.Template) {
+          this.templateThreadGroupList.unshift(threadGroup);
+          this.templateThreadGroupList = [...this.templateThreadGroupList].sort((a, b) => a.title.localeCompare(b.title));;
+        }
       },
       error: error => {
         console.error(error);
@@ -633,7 +801,7 @@ export class ChatComponent implements OnInit {
 
   onFilesDropped(files: FullPathFile[]): Subscription {
     // 複数ファイルを纏めて追加したときは全部読み込み終わってからカウントする。
-    this.tokenObj.totalTokens = -1;
+    this.tokenObjSummary.totalTokens = -1;
     this.isLock = true;
 
     let label = '';
@@ -682,15 +850,20 @@ export class ChatComponent implements OnInit {
     fileInput.click();
   }
 
-  calcCost(): number {
-    const charCount = (this.tokenObj.text + this.tokenObj.image + this.tokenObj.audio + this.tokenObj.video) || this.tokenObj.totalBillableCharacters || 0;
-    const isLarge = this.tokenObj.totalTokens > 128000 ? 2 : 0;
-    // const cost = charCount / 1000 * this.chatService.modelMap[this.inDto.args.model || 'gemini-1.5-pro'].price[isLarge];
-    const cost = this.selectedThreadGroup.threadList.map(thread => thread.inDto.args).reduce((prev, curr) => {
-      // console.log(`prev=${prev} charCount=${charCount} curr=${this.chatService.modelMap[curr.model || 'gemini-1.5-pro'].price[isLarge]}`)
-      return prev + charCount / 1000 * this.chatService.modelMap[curr.model || 'gemini-1.5-pro'].price[isLarge];
-    }, 0);
-    return cost;
+  calcCost(index: number): number {
+    const model = this.selectedThreadGroup.threadList[index].inDto.args.model;
+    if (model.startsWith('gemini-1.5')) {
+      const charCount = (this.tokenObjSummary.text + this.tokenObjSummary.image + this.tokenObjSummary.audio + this.tokenObjSummary.video) || this.tokenObjSummary.totalBillableCharacters || 0;
+      const isLarge = this.tokenObjSummary.totalTokens > 128000 ? 2 : 1;
+      return charCount / 1000 * this.chatService.modelMap[model].price[0] * isLarge;
+    } else if (model.startsWith('gemini-2')) {
+      const tokenCount = (this.tokenObjSummary.text + this.tokenObjSummary.image + this.tokenObjSummary.audio + this.tokenObjSummary.video) || this.tokenObjSummary.totalTokens;
+      const isLarge = this.tokenObjSummary.totalTokens > 200000 ? 2 : 1;
+      return tokenCount / 1000 * this.chatService.modelMap[model].price[0] * isLarge;
+    } else {
+      const tokenCount = (this.tokenObjSummary.text + this.tokenObjSummary.image + this.tokenObjSummary.audio + this.tokenObjSummary.video) || this.tokenObjSummary.totalTokens;
+      return tokenCount / 1000 * this.chatService.modelMap[model].price[0];
+    }
   }
 
   renameThreadGroup($event: Event, threadGroup: ThreadGroup, flag: boolean, $index: number): void {
@@ -706,7 +879,7 @@ export class ChatComponent implements OnInit {
   }
 
   appendMessageGroup(threadId: string, previousMessageGroupId: string): void {
-    const messageGroup = this.messageService.addSingleMessageGroupDry(threadId, previousMessageGroupId, 'user', [this.messageService.initContentPart(genDummyId(), '')]);
+    const messageGroup = this.messageService.addSingleMessageGroupDry(threadId, previousMessageGroupId, 'user', [this.messageService.initContentPart(genDummyId('contentPart'), '')]);
     messageGroup.messages[0].editing = 1;
     this.inputArea.messageGroupId = messageGroup.id;
     this.rebuildThreadGroup();
@@ -792,7 +965,7 @@ export class ChatComponent implements OnInit {
         if (this.inputArea.content[0].type === 'text' && this.inputArea.content[0].text) {
           return safeForkJoin(threadGroup.threadList.filter(thread => threadIdList.includes(thread.id)).map(thread => {
             const contents = this.inputArea.content.map(content => {
-              const contentPart = this.messageService.initContentPart(genDummyId(), content.text);
+              const contentPart = this.messageService.initContentPart(genDummyId('contentPart'), content.text);
               contentPart.type = content.type as ContentPartType;
               contentPart.text = content.text;
               contentPart.linkId = contentPart.type === 'file' ? (content as { fileGroupId: string }).fileGroupId : undefined;
@@ -821,6 +994,7 @@ export class ChatComponent implements OnInit {
                 DomUtils.textAreaHeighAdjust(this.textAreaElem().nativeElement); // 高さ調整
                 // this.textBodyElem().forEach(elem => DomUtils.scrollToBottomIfNeededSmooth(elem.nativeElement));
               }, 0);
+
               upsertResponseList.forEach(messageGroup => messageGroup.isExpanded = true);
               return upsertResponseList.map(messageGroup => messageGroup.id);
             }),
@@ -871,7 +1045,7 @@ export class ChatComponent implements OnInit {
     this.stopPropagation($event);
     const selectedIndex = group.selectedIndex + delta;
     // Chainされている場合はシンクロ
-    const chainedList = this.getChaindedMessageGroupList(group, 1);
+    const chainedList = this.getChainedMessageGroupList(group, 1);
     chainedList.forEach(group => {
       console.log(group.id, selectedIndex, group.selectedIndex);
       group.selectedIndex = Math.min(Math.max(0, selectedIndex), this.messageService.nextMessageGroupId[group.id].length - 1);
@@ -952,6 +1126,7 @@ export class ChatComponent implements OnInit {
       throw new Error('Not implemented');
     }
 
+    let threadIndex = 0;
     for (const thread of threadList) {
       const tailMessageGroup = this.messageService.messageGroupMas[this.messageGroupIdListMas[thread.id].at(-1)!];
       const modelName = thread.inDto.args.model ?? '';
@@ -961,7 +1136,7 @@ export class ChatComponent implements OnInit {
       // バリデーションエラー
       if (!args.model) {
         throw new Error('Model is not set');
-      } else if (this.tokenObj.totalTokens > model.maxInputTokens) {
+      } else if (this.tokenObjList[threadIndex].totalTokens > model.maxInputTokens) {
         this.snackBar.open(`トークンサイズオーバーです。「${modelName}」への入力トークンは ${model.maxInputTokens}以下にしてください。`, 'close', { duration: 3000 });
         throw new Error(`トークンサイズオーバーです。「${modelName}」への入力トークンは ${model.maxInputTokens}以下にしてください。`);
       } else if (args.isGoogleSearch && !this.chatService.modelMap[args.model].isGSearch) {
@@ -984,10 +1159,11 @@ export class ChatComponent implements OnInit {
         thread.inDto.args.temperature = 1;
       } else { }
       const turnCount = Math.floor(this.messageGroupIdListMas[thread.id].length / 2);
-      if (turnCount / 7 > 1 && turnCount % 7 % 2 === 0 && this.tokenObj.totalTokens > 16384) {
+      if (turnCount / 7 > 1 && turnCount % 7 % 2 === 0 && this.tokenObjList[threadIndex].totalTokens > 16384) {
         // 7問い合わせごとにアラート出す
         this.snackBar.open(`チャット内のやり取りが長引いてきました。話題が変わった際は左上の「新規チャット」から新規チャットを始めることをお勧めします。\n（チャットが長くなるとAIの回答精度が落ちていきます）`, 'close', { duration: 6000 });
       } else { }
+      threadIndex++;
     }
 
     // this.isLock = true;
@@ -998,7 +1174,10 @@ export class ChatComponent implements OnInit {
         throw new Error(`メッセージ受信中のスレッドがあります。`);
       }
     }
-    // 対象スレッドをロック
+
+    // ダミーIDを本物のIDに変換するために、スレッドIDを一旦保存しておく。
+    const beforeTreadIdList = threadList.map(thread => thread.id);
+    // 対象スレッドをロック（ダミーIDだけどとりあえず二重送信抑止のため）
     threadList.forEach(thread => this.threadLocks[thread.id] = true);
 
     // 初回送信後はプレースホルダをデフォルトのものに戻す。
@@ -1029,6 +1208,12 @@ export class ChatComponent implements OnInit {
     _paq.push(['trackEvent', 'AIチャット', 'メッセージ送信', threadList.length]);
 
     return this.saveAndBuildThreadGroup(threadList.map(thread => thread.id)).pipe(
+      tap(_ => {
+        // 対象スレッドをロック (dummy-idから本物のIDに変更する)
+        beforeTreadIdList.forEach(threadId => this.threadLocks[threadId] = false);
+        threadList.forEach(thread => this.threadLocks[thread.id] = true);
+        // console.log(`threadLocks`, this.threadLocks);
+      }),
       switchMap(messageGroupIds =>
         safeForkJoin(messageGroupIds.filter(messageGroupId => {
           if (type === 'threadGroup') {
@@ -1077,18 +1262,47 @@ export class ChatComponent implements OnInit {
                   messageGroup.messages.map(message => {
                     message.status = MessageStatusType.Waiting;
                     if (message.observer) {
-                      this.chatStreamSubscriptionList[this.selectedThreadGroup.id].push(message.observer.subscribe(this.chatStreamHander(message)));
+                      this.chatStreamSubscriptionList[this.selectedThreadGroup.id].push({ message, subscription: message.observer.subscribe(this.chatStreamHandler(message)) });
                       console.log(`Message ID before chat completion: ${message.id}`);
                     } else { }
                   });
                 });
-                // 一番下まで下げる
-                if (this.textBodyElem() && this.textBodyElem()[index] && this.textBodyElem()[index].nativeElement) {
-                  DomUtils.scrollToBottomIfNeededSmooth(this.textBodyElem()[index].nativeElement);
-                } else { }
+
                 this.rebuildThreadGroup();
-                this.autoscroll = true;
-                this.beforeScrollTop = -1;
+
+                let isScrollFired = false;
+                // スクロール
+                setTimeout(() => {
+                  requestAnimationFrame(() => {
+                    resDto.messageGroupList.forEach(messageGroup => {
+                      const message = messageGroup.messages[0]; // 先頭のメッセージを取得
+                      const threadIndex = this.selectedThreadGroup.threadList.map(thread => thread.id).indexOf(this.messageService.messageGroupMas[message.messageGroupId].threadId);
+                      let containerIndex = 0;
+                      let anchorIndex = 0;
+                      if (this.userService.chatTabLayout === 'tabs') {
+                        // タブ表示の場合はスレッド分岐しているので、スレッドのindexを取得する。
+                        containerIndex = threadIndex;
+                        anchorIndex = 0;
+                        // アンカーはカウントアップしていかないといけない。
+                        for (let iThread = 0; iThread <= threadIndex; iThread++) {
+                          anchorIndex += this.messageGroupIdListMas[this.selectedThreadGroup.threadList[iThread].id].length - 1; // systemの分1を引く
+                        }
+                        anchorIndex--; // 末尾を取りたいので-1する。
+                      } else {
+                        // タブ表示じゃない場合はスレッド分岐してないので0にする。
+                        containerIndex = 0;
+                        anchorIndex = this.messageGroupIdListMas[this.selectedThreadGroup.threadList[threadIndex].id].indexOf(message.messageGroupId);
+                      }
+                      // console.log(`threadIndex=${threadIndex} containerIndex=${containerIndex} anchorIndex=${anchorIndex}`);
+                      const anchorElem = this.anchor().at(anchorIndex);
+                      if (anchorElem && !isScrollFired) {
+                        isScrollFired = true; // 複数回スクロールが発火すると逆にスクロールが止まるので
+                        anchorElem.nativeElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      } else { }
+                    });
+                  });
+
+                }, 100);
                 console.log(this.messageGroupIdListMas);
               }),
               catchError(error => {
@@ -1112,15 +1326,12 @@ export class ChatComponent implements OnInit {
     );
   }
 
-  scrollRange = -1;
-  autoscroll = false;
-  beforeScrollTop = -1;
   /**
    * チャットのレスポンスストリームを捌くハンドラ
    * @param message
    * @returns
    */
-  chatStreamHander(message: MessageForView): Partial<Observer<OpenAI.ChatCompletionChunk>> | ((value: OpenAI.ChatCompletionChunk) => void) {
+  chatStreamHandler(message: MessageForView): Partial<Observer<OpenAI.ChatCompletionChunk>> | ((value: OpenAI.ChatCompletionChunk) => void) {
     return {
       next: _next => {
         // ここのChatStreamにはContentPartが付与されているはず
@@ -1146,9 +1357,10 @@ export class ChatComponent implements OnInit {
               }
               const text = choice.delta.content;
               content.text += text;
-              // console.log(`content=${choice.delta.content}`);
+              // console.log(`content[${content.id}]=${choice.delta.content}`);
             } else { }
 
+            const toolCallGroupId = message.contents.findLast(content => content.type === ContentPartType.TOOL)?.id || ''; // toolCallGroupIdは発番はされているが取ってくるのが難しいので一旦contentIdで代用。発行単位が同じなのでこれでも大丈夫だと思う。
             // tool_info
             if (choice.delta.role as any === 'info') {
               if (content.type === ContentPartType.TOOL) {
@@ -1171,18 +1383,18 @@ export class ChatComponent implements OnInit {
               // 最初の1行のみidが振られているので、それを使ってtoolCallを作る。
               const toolCallId = (choice.delta as { tool_call_id: string }).tool_call_id;
               const infoBody = JSON.parse(choice.delta.content || '{}') as ToolCallPartInfoBody;
-              const info = { type: ToolCallPartType.INFO, body: infoBody, toolCallId } as ToolCallPartInfo;
+              infoBody.isRunning = true;
+              const info = { type: ToolCallPartType.INFO, body: infoBody, toolCallId, toolCallGroupId } as ToolCallPartInfo;
               if (content.toolCallGroup) {
               } else {
                 // content.toolCallGroup = { id: next.contentPart.id, toolCallList: [] };
-                content.toolCallGroup = { id: '', projectId: this.selectedProject.id, toolCallList: [] };
+                content.toolCallGroup = { id: toolCallGroupId, projectId: this.selectedProject.id, toolCallList: [] };
               }
               const ary = JSON.parse(content.text || '[]');
               this.toolCallService.appendToolCallPart(ary, info);
               content.text = JSON.stringify(ary);
 
               // const toolCallGroupId = next.contentPart.linkId || '';
-              const toolCallGroupId = '';
               content.toolCallGroup.toolCallList.push({ type: ToolCallPartType.INFO, body: infoBody, seq: content.toolCallGroup.toolCallList.length, toolCallGroupId, toolCallId });
               // content.id = next.contentPart.id;
             } else {/** infoじゃないのは無視 */ }
@@ -1196,7 +1408,7 @@ export class ChatComponent implements OnInit {
                   const content = message.contents.findLast(content => content.type === ContentPartType.TOOL);
                   if (content && content.type === ContentPartType.TOOL) {
                     if (content.toolCallGroup) {
-                      content.toolCallGroup.toolCallList.push({ type: ToolCallPartType.CALL, body: tool_call as ToolCallPartCallBody, seq: content.toolCallGroup.toolCallList.length, toolCallGroupId: '', toolCallId: tool_call.id });
+                      content.toolCallGroup.toolCallList.push({ type: ToolCallPartType.CALL, body: tool_call as ToolCallPartCallBody, seq: content.toolCallGroup.toolCallList.length, toolCallGroupId: toolCallGroupId, toolCallId: tool_call.id });
                     } else { throw new Error('toolCallGroup is not set'); } // ここに来るのはおかしいのでエラーにする
                   } else { throw new Error('content is not tool'); } // ここに来るのはおかしいのでエラーにする
                 } else {
@@ -1217,8 +1429,9 @@ export class ChatComponent implements OnInit {
 
             // tool_result
             if (['tool', 'command', 'input'].includes(choice.delta.role || '')) {
+              // console.log('tool_result', choice.delta);
               const tool_call_id = (choice.delta as { tool_call_id: string }).tool_call_id;
-              const content = message.contents.find(content => content.type === ContentPartType.TOOL);
+              const content = message.contents.find(content => content.type === ContentPartType.TOOL && content.id === toolCallGroupId);
               if (content && content.toolCallGroup) {
                 // console.log('tool_result', choice.delta);
                 const toolCall = choice.delta as ToolCallPartBody;
@@ -1229,7 +1442,7 @@ export class ChatComponent implements OnInit {
                     type: ToolCallPartType.RESULT,
                     body: choice.delta as ToolCallPartResultBody,
                     seq: content.toolCallGroup.toolCallList.length,
-                    toolCallGroupId: 'content.toolCallGroup.id',//content.toolCallGroup.id,
+                    toolCallGroupId: toolCallGroupId,//content.toolCallGroup.id,
                     // toolCallGroupId: content.toolCallGroup.id,
                     toolCallId: toolCall.tool_call_id,
                   } as ToolCallPartResult;
@@ -1244,7 +1457,7 @@ export class ChatComponent implements OnInit {
                     type: choice.delta.role as ToolCallPartType,
                     body: choice.delta as any,
                     seq: content.toolCallGroup.toolCallList.length,
-                    toolCallGroupId: 'content.toolCallGroup.id',
+                    toolCallGroupId: toolCallGroupId,
                     // toolCallGroupId: content.toolCallGroup.id,
                     toolCallId: (toolCall as { tool_call_id: string }).tool_call_id,
                   });
@@ -1253,7 +1466,24 @@ export class ChatComponent implements OnInit {
                 throw new Error('content is not tool');
               } // ここに来るのはおかしいのでエラーにする
             } else {/** infoじゃないのは無視 */ }
-          } else {/** deltaが無いものはないような気もするけど、、 */ }
+          } else {/** 自作で追加したタイプはdeltaが無かったりする */ }
+
+          const thinking = (choice as any).thinking;
+          if (thinking) {
+            if (content.type === ContentPartType.META && content.meta && content.meta.thinking) {
+              content.text += thinking;
+              content.meta.thinking += thinking;
+            } else {
+              // metaじゃなかったらブレイクする
+              const contentPart = this.messageService.initContentPart(message.id, '');
+              contentPart.type = ContentPartType.META;
+              contentPart.meta = { thinking };
+              contentPart.text = thinking;
+              message.contents.push(contentPart);
+              this.messageService.addMessageContentPartDry(contentPart.id, contentPart);
+              content = contentPart;
+            }
+          } else { }
 
           // Google検索結果のメタデータをセットする
           const groundingMetadata = (choice as any).groundingMetadata;
@@ -1281,32 +1511,13 @@ export class ChatComponent implements OnInit {
           }
         });
 
+        // console.dir(message.contents);
+        if (message.contents.map(content => content.type === 'text' ? content.text : content.type === 'tool' ? content.text : content.type === 'meta' ? content.text : '').join('').trim().length > 0) {
+          // 1文字以上あったらローディングカバーを外す
         message.status = MessageStatusType.Loading;
-        this.messageGroupBitCounter[message.messageGroupId] = (this.messageGroupBitCounter[message.messageGroupId] ?? 0) + 1;
-        if (this.autoscroll) {
-          // 一回でも上スクロールしてたらオートスクロールをオフ。
-          const threadIndex = this.selectedThreadGroup.threadList.map(thread => thread.id).indexOf(this.messageService.messageGroupMas[message.messageGroupId].threadId);
-          requestAnimationFrame(() => {
-            const elem = this.textBodyElem().at(threadIndex);
-            if (elem) {
-              const scrollTop = elem.nativeElement.scrollTop;
-              if (scrollTop > 0) {
-                // console.log(this.beforeScrollTop, scrollTop);
-                if (this.beforeScrollTop <= scrollTop) {
-                  this.beforeScrollTop = scrollTop;
-                  if (this.userService.chatTabLayout === 'tabs') {
-                    // this.anchor().at(-1)?.nativeElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                  } else {
-                    this.chatPanelGroupElem()?.at(-1)?.nativeElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                  }
-                  DomUtils.scrollToBottomIfNeededSmooth(elem.nativeElement);
-                } else {
-                  this.autoscroll = false;
-                }
-              } else { }
-            } else { }
-          });
         } else { }
+
+        this.messageGroupBitCounter[message.messageGroupId] = (this.messageGroupBitCounter[message.messageGroupId] ?? 0) + 1;
       },
       error: error => {
         this.chatErrorHandler(message, error);
@@ -1328,7 +1539,6 @@ export class ChatComponent implements OnInit {
    */
   chatAfterHandler(message: MessageForView): void {
     // console.log(`after----------------`);
-    this.autoscroll = false;
     const threadId = this.messageService.messageGroupMas[message.messageGroupId].threadId;
     const threadGroup = this.threadGroupList.find(threadGroup => threadGroup.threadList.find(thread => thread.id === threadId));
     if (threadGroup) {
@@ -1396,15 +1606,54 @@ export class ChatComponent implements OnInit {
 
   /** チャット中断 */
   chatCancel(): void {
+    // messageGroup.messages.forEach(message => message.status = MessageStatusType.Canceled);
     _paq.push(['trackEvent', 'AIチャット', 'メッセージキャンセル', this.selectedThreadGroup.threadList.length]);
     this.selectedThreadGroup.threadList.forEach(thread => {
       if (this.chatStreamSubscriptionList[this.selectedThreadGroup.id]) {
+        // メッセージステータスをキャンセルにする
+        const messageGroupId = this.messageGroupIdListMas[thread.id].at(-1);
+        messageGroupId ? this.messageService.messageGroupMas[messageGroupId].messages.forEach(message => message.status = MessageStatusType.Canceled) : '';
+        // スレッドのロックを解除する
         this.threadLocks[thread.id] = false;
         setTimeout(() => { this.textAreaElem().nativeElement.focus(); }, 100);
-        this.chatStreamSubscriptionList[this.selectedThreadGroup.id].forEach(s => s.unsubscribe());
+        this.chatStreamSubscriptionList[this.selectedThreadGroup.id].forEach(s => s.subscription.unsubscribe());
       }
     });
     delete this.chatStreamSubscriptionList[this.selectedThreadGroup.id];
+  }
+
+  /** メッセージ受信中かどうかの判定 */
+  hasWaitingOrLoadingMessages(viewType: 'tabs' | 'list', messageGroup?: MessageGroupForView): boolean {
+    if (this.isThreadGroupLoading) {
+      // スレッドグループのロード中は変なことが起きるのでチェック無しでfalseにする。
+      return false;
+    }
+    if (viewType === 'tabs') {
+      if (messageGroup) {
+        return messageGroup.messages.some(message => ['Waiting', 'Loading'].includes(message.status)) ?? false;
+      } else {
+        return false;
+      }
+    } else if (viewType === 'list') {
+      return this.selectedThreadGroup.threadList.some(thread => {
+        if (this.messageGroupIdListMas[thread.id]) {
+          const messageGroupId = this.messageGroupIdListMas[thread.id].at(-1);
+          if (messageGroupId) {
+            const messageGroup = this.messageService.messageGroupMas[messageGroupId];
+            if (messageGroup) {
+              return messageGroup.messages.some(message => ['Waiting', 'Loading'].includes(message.status)) ?? false;
+            } else {
+              return false;
+            }
+          } else {
+            return false;
+          }
+        } else {
+          return false;
+        }
+      });
+    }
+    return false;
   }
 
   onKeyDown($event: KeyboardEvent): void {
@@ -1426,7 +1675,30 @@ export class ChatComponent implements OnInit {
 
   onChange(): void {
     this.charCount = 0;
-    this.tokenObj.totalTokens = -1;
+    this.tokenObjSummary.totalTokens = -1;
+
+    // 全スレッド纏めてやろうとしたけどdummyが積み重なってるパターンの考慮が出来てなくて頓死
+    // const ids = this.selectedThreadGroup.threadList.filter(thread => !thread.id.startsWith('dummy-')).map(thread => thread.id);
+    // this.chatService.countTokensByThread(ids).subscribe({
+    //   next: next => {
+    //     this.tokenObjList = next.map(tokenObj => ({
+    //       ...tokenObj,
+    //       cost: this.calcCost(next.findIndex(tokenObj => tokenObj.id === tokenObj.id)),
+    //       model: this.selectedThreadGroup.threadList.find(thread => thread.id === tokenObj.id)!.inDto.args.model,
+    //     }));
+    //     this.tokenObjSummary = { id: 'Summary', totalTokens: 0, totalBillableCharacters: 0, text: 0, image: 0, audio: 0, video: 0, cost: 0, model: 'Summary' };
+    //     this.tokenObjList.forEach(tokenObj => {
+    //       this.tokenObjSummary.totalTokens += tokenObj.totalTokens;
+    //       this.tokenObjSummary.totalBillableCharacters! += tokenObj.totalBillableCharacters || 0;
+    //       this.tokenObjSummary.text += tokenObj.text;
+    //       this.tokenObjSummary.image += tokenObj.image;
+    //       this.tokenObjSummary.audio += tokenObj.audio;
+    //       this.tokenObjSummary.video += tokenObj.video;
+    //       this.tokenObjSummary.cost += tokenObj.cost;
+    //     });
+    //   },
+    // });
+
     safeForkJoin(this.selectedThreadGroup.threadList.map(thread => {
       // console.log(this.messageGroupIdListMas[thread.id].at(-1));
       const inDto: ChatInputArea[] = [];
@@ -1457,8 +1729,10 @@ export class ChatComponent implements OnInit {
       return this.chatService.countTokensByProjectModel(inDto, 'messageGroup', tailMessageGroupId);
     })).subscribe({
       next: next => {
-        const tokenObj: CountTokensResponse = { totalTokens: 0, totalBillableCharacters: 0, text: 0, image: 0, audio: 0, video: 0 };
-        next.forEach(res => {
+        this.tokenObjSummary = { id: 'Summary', totalTokens: 0, totalBillableCharacters: 0, text: 0, image: 0, audio: 0, video: 0, cost: 0, model: 'Summary' };
+        this.tokenObjList = [];
+        next.forEach((res, index) => {
+          const tokenObj: CountTokensResponseForView = { id: this.selectedThreadGroup.threadList[index].id, totalTokens: 0, totalBillableCharacters: 0, text: 0, image: 0, audio: 0, video: 0, cost: 0, model: this.selectedThreadGroup.threadList[index].inDto.args.model };
           tokenObj.totalTokens += res.totalTokens;
           tokenObj.totalBillableCharacters = tokenObj.totalBillableCharacters || 0; // undefinedの場合があるので初期化
           tokenObj.totalBillableCharacters += res.totalBillableCharacters || 0;
@@ -1466,13 +1740,26 @@ export class ChatComponent implements OnInit {
           tokenObj.image += res.image;
           tokenObj.audio += res.audio;
           tokenObj.video += res.video;
+          tokenObj.cost += this.calcCost(index);
+          this.tokenObjList.push(tokenObj);
+
+          this.tokenObjSummary.totalTokens += tokenObj.totalTokens;
+          this.tokenObjSummary.totalBillableCharacters! += tokenObj.totalBillableCharacters;
+          this.tokenObjSummary.text += tokenObj.text;
+          this.tokenObjSummary.image += tokenObj.image;
+          this.tokenObjSummary.audio += tokenObj.audio;
+          this.tokenObjSummary.video += tokenObj.video;
+          this.tokenObjSummary.cost += tokenObj.cost;
         });
-        this.tokenObj = tokenObj;
-        this.cost = this.calcCost();;
+        this.cost = this.tokenObjSummary.cost;
       },
     });
     // textareaの縦幅更新。遅延打ちにしないとvalueが更新されていない。
     this.textAreaElem() && setTimeout(() => { DomUtils.textAreaHeighAdjust(this.textAreaElem().nativeElement); }, 0);
+  }
+
+  tokenString(): string {
+    return this.tokenObjList.map(tokenObj => `${tokenObj.model}:${tokenObj.totalTokens}`).join('\n');
   }
 
   contextCacheControl(threadGroup: ThreadGroup): void {
@@ -1515,10 +1802,10 @@ export class ChatComponent implements OnInit {
     // this.dialog.open(DialogComponent, { data: { title: 'alert', message: `現在 ${disabledModels.join('、')}は使えません。他のモデルを使ってください。`, options: ['Close'] } });
 
     this.isLock = true;
-    safeForkJoin(threadGroup.threadList.map(thread => {
+    safeForkJoin(threadGroup.threadList.map((thread, index) => {
       // 32768トークン以上ないとキャッシュ作成できない
-      if (this.tokenObj.totalTokens < 32768) {
-        const message = `コンテキストキャッシュを作るには 32,768 トークン以上必要です。\n現在 ${this.tokenObj.totalTokens} トークンしかありません。`;
+      if (this.tokenObjList[index].totalTokens < 32768) {
+        const message = `コンテキストキャッシュを作るには 32,768 トークン以上必要です。\n現在 ${this.tokenObjList[index].totalTokens} トークンしかありません。`;
         this.dialog.open(DialogComponent, { data: { title: 'alert', message, options: ['Close'] } });
         throw new Error(message);
       } else if (!threadGroup.threadList[0].inDto.args.model?.endsWith('-001') && !threadGroup.threadList[0].inDto.args.model?.endsWith('-002')) {
@@ -1657,9 +1944,9 @@ export class ChatComponent implements OnInit {
     const threadGroup = this.selectedThreadGroup;
     const thread = threadGroup.threadList.find(_thread => _thread.id === targetThread.id);
     if (thread && threadGroup.threadList.length > 1) {
-      this.dialog.open(DialogComponent, { data: { title: '削除', message: `このスレッドを削除しますか？\n「${thread.inDto.args.model}」`, options: ['削除', 'キャンセル'] } }).afterClosed().subscribe({
+      this.dialog.open(DialogComponent, { data: { title: '削除', message: `このスレッドを削除しますか？\n「${thread.inDto.args.model}」`, options: ['キャンセル', '削除'] } }).afterClosed().subscribe({
         next: next => {
-          if (next === 0) {
+          if (next === 1) {
             threadGroup.threadList.splice(threadGroup.threadList.indexOf(thread), 1);
             if (thread.id.startsWith('dummy-')) {
               // ダミーの場合はAPIには送る必要が無い。
@@ -1683,13 +1970,20 @@ export class ChatComponent implements OnInit {
 
   removeMessageGroup(messageGroup: MessageGroupForView): void {
     if (messageGroup.id.startsWith('dummy-')) {
+      if (this.messageGroupIdListMas[messageGroup.threadId][0].startsWith('dummy-') && messageGroup.role === 'assistant') {
+        // スレッドの先頭がダミーの場合は追加直後のスレッドということなので、選択されたものがassistantならその一個前のメッセージで発火
+        // userとかの場合はどうせ全部ダミーなので単純削除に回す。
+        this.send('messageGroup', [messageGroup.previousMessageGroupId || '']).subscribe();
+        return;
+      } else {
       // dummyを削除するのは単純削除
       this.messageService.removeDummyMessageGroup(messageGroup);
       this.inputArea.messageGroupId = messageGroup.previousMessageGroupId;
       this.rebuildThreadGroup();
       return;
+      }
     } else { }
-    this.getChaindedMessageGroupList(messageGroup).forEach(messageGroup => {
+    this.getChainedMessageGroupList(messageGroup).forEach(messageGroup => {
       if (this.isThreadLocked(messageGroup.threadId)) {
         this.snackBar.open(`現在処理中のため削除できません。`, 'close', { duration: 3000 });
         return;
@@ -1726,6 +2020,32 @@ export class ChatComponent implements OnInit {
     });
   }
 
+  /**
+   * スレッドロックを解除する
+   * @param messageGroup
+   */
+  cancelGenerating(messageGroup: MessageGroupForView): void {
+    if (this.isThreadLocked(messageGroup.threadId)) {
+    } else {
+      // そもそも生成中じゃない場合は何もしない
+      return;
+    }
+
+    const thread = this.selectedThreadGroup.threadList.find(thread => thread.id === messageGroup.threadId);
+    if (!thread) {
+      this.snackBar.open(`エラーが起きてキャンセルできませんでした。`, 'close', { duration: 3000 });
+      return;
+    } else { }
+    _paq.push(['trackEvent', 'AIチャット', 'メッセージキャンセル-シングル', 1]);
+    messageGroup.messages.forEach(message => message.status = MessageStatusType.Canceled);
+    if (this.chatStreamSubscriptionList[this.selectedThreadGroup.id]) {
+      this.threadLocks[thread.id] = false;
+      setTimeout(() => { this.textAreaElem().nativeElement.focus(); }, 100);
+      this.chatStreamSubscriptionList[this.selectedThreadGroup.id].forEach(s => s.subscription.unsubscribe());
+    }
+    delete this.chatStreamSubscriptionList[this.selectedThreadGroup.id];
+  }
+
   toolExec(obj: { contentPart: ContentPart, toolCallPartCommandList: ToolCallPartCommand[] }): void {
     console.log(obj);
     this.messageService.updateTimestamp('message-group', this.messageService.messageMas[obj.contentPart.messageId].messageGroupId).subscribe({
@@ -1746,7 +2066,7 @@ export class ChatComponent implements OnInit {
    * @param messageGroup
    * @returns
    */
-  getChaindedMessageGroupList(messageGroup: MessageGroupForView, offset: number = 0): MessageGroupForView[] {
+  getChainedMessageGroupList(messageGroup: MessageGroupForView, offset: number = 0): MessageGroupForView[] {
     const targetMessageGrouplist = [];
     if (this.userService.chatTabLayout === 'tabs') {
       // tabモードの時は単独
@@ -1792,7 +2112,7 @@ export class ChatComponent implements OnInit {
     }
   }
   editChat(messageGroup: MessageGroupForView): void {
-    const targetMessageGroupList = this.getChaindedMessageGroupList(messageGroup);
+    const targetMessageGroupList = this.getChainedMessageGroupList(messageGroup);
     const syncTargetMessageGroupList = targetMessageGroupList.filter(_messageGroup => _messageGroup !== messageGroup);
 
     // 複数ある場合はシンクロさせる
@@ -1884,9 +2204,9 @@ export class ChatComponent implements OnInit {
 
   removeThreadGroup($event: MouseEvent, $index: number, threadGroup: ThreadGroup): void {
     // this.stopPropagation($event);
-    this.dialog.open(DialogComponent, { data: { title: 'チャット削除', message: `このチャットを削除しますか？\n「${threadGroup.title.replace(/\n/g, '')}」`, options: ['削除', 'キャンセル'] } }).afterClosed().subscribe({
+    this.dialog.open(DialogComponent, { data: { title: 'チャット削除', message: `このチャットを削除しますか？\n「${threadGroup.title.replace(/\n/g, '')}」`, options: ['キャンセル', '削除'] } }).afterClosed().subscribe({
       next: next => {
-        if (next === 0) {
+        if (next === 1) {
           this.threadService.deleteThreadGroup(threadGroup.id).subscribe({
             next: next => {
               this.threadGroupList.splice(this.threadGroupList.indexOf(threadGroup), 1);
@@ -1944,9 +2264,9 @@ export class ChatComponent implements OnInit {
         Login: 'ログインユーザー全員',
         Public: '無制限',
       }
-      this.dialog.open(DialogComponent, { data: { title: 'Alert', message: `共有範囲の異なるプロジェクトに送ります。\n[${table[this.selectedProject.visibility]}]${this.selectedProject.label}->[${table[project.visibility]}]${project.label}\nよろしいですか？`, options: ['OK', 'キャンセル'] } }).afterClosed().subscribe({
+      this.dialog.open(DialogComponent, { data: { title: 'Alert', message: `共有範囲の異なるプロジェクトに送ります。\n[${table[this.selectedProject.visibility]}]${this.selectedProject.label}->[${table[project.visibility]}]${project.label}\nよろしいですか？`, options: ['キャンセル', 'OK',] } }).afterClosed().subscribe({
         next: next => {
-          if (next === 0) {
+          if (next === 1) {
             exec();
           }
         }
@@ -2019,6 +2339,208 @@ export class ChatComponent implements OnInit {
     }
   }
 
+  saveAsTemplate(threadName: string, description: string, includeMessages: boolean, threadGroupId?: string): void {
+    const selectedProject = this.selectedProject;
+    const selectedThreadGroup = this.selectedThreadGroup;
+    const threadIdList = selectedThreadGroup.threadList.map(thread => thread.id);
+    let replaceIndex = -1;
+
+    // 既存のスレッドグループが指定されていたら一旦削除してから再登録
+    // TODO 本当は更新ロジックを作った方がいいけど面倒だから削除再登録にする
+    const cleanup = threadGroupId ? this.threadService.deleteThreadGroup(threadGroupId).pipe(
+      tap(() => {
+        replaceIndex = this.templateThreadGroupList.findIndex(tg => tg.id === threadGroupId);
+        // this.templateThreadGroupList.splice(replaceIndex, 1);
+      }),
+    ) : of(undefined);
+    ((() => {
+      if (includeMessages) {
+        const inputArea = this.inputArea;
+        this.inputArea = this.generateInitalInputArea();
+        return of(0).pipe(
+          switchMap(() => cleanup),
+          switchMap(() => this.saveAndBuildThreadGroup()),
+          switchMap(threadIdList =>
+            this.threadService.cloneThreadGroup(selectedThreadGroup.id, {
+              type: ThreadGroupType.Template,
+              title: threadName,
+              description: description
+            })
+          ),
+          // inputAreaを強制的に入れる
+          tap(clonedGroup => {
+            clonedGroup.threadList.forEach(thread => {
+              (thread.inDto as any).inputArea = inputArea;
+            });
+          }),
+          switchMap(clonedGroup =>
+            this.threadService.upsertThreadGroup(selectedProject.id, clonedGroup)
+          ),
+          tap(() => {
+            this.inputArea = inputArea; // 元に戻す
+          }),
+        );
+      } else {
+        // メッセージは含めない場合⇒クローンを使わずに積み上げ
+        const threadGroup = {
+          ...genInitialBaseEntity(),
+          ...selectedThreadGroup,
+          id: genDummyId('threadGroup'), // 新規作成なのでDummyIDを付与
+          title: threadName,
+          description: description,
+          type: ThreadGroupType.Template,
+          threadList: selectedThreadGroup.threadList.map(_thread => {
+            // 元オブジェクトを破壊しないようにcloneしておく
+            const thread = Utils.clone(_thread);
+            (thread.inDto as any).inputArea = this.inputArea; // 無理矢理inputAreaを入れる
+            return {
+              ...thread,
+              id: genDummyId('thread'), // 新規作成なのでDummyIDを付与
+              inDto: {
+                ...thread.inDto,
+                args: {
+                  ...thread.inDto.args,
+                  cachedContent: undefined, // キャッシュは消す
+                }
+              }
+            };
+          })
+        } as ThreadGroup;
+        // スレッドグループを保存する
+        return of(0).pipe(
+          switchMap(() => cleanup),
+          switchMap(() => this.threadService.upsertThreadGroup(threadGroup.projectId, threadGroup)),
+          switchMap(savedThreadGroup => {
+            // // スレッドグループを保存したらメッセージグループを保存する
+
+            // 元メッセージの0番目（システムプロンプト）を取得する 
+            const systemMessageGroupList = threadIdList.map(threadId => {
+              const systemMessageGroupId = this.messageGroupIdListMas[threadId][0];
+              return this.messageService.messageGroupMas[systemMessageGroupId];
+            });
+            // 元オブジェクトを破壊しないようにcloneしておく 
+            const forInsert = Utils.clone(systemMessageGroupList);
+            forInsert.forEach((messageGroup, index) => {
+              messageGroup.id = genDummyId('messageGroup'); // 新規作成なのでDummyIDを付与
+              messageGroup.threadId = savedThreadGroup.threadList[index].id;
+              messageGroup.messages.forEach(message => {
+                message.id = genDummyId('message'); // 新規作成なのでDummyIDを付与
+                message.cacheId = undefined; // キャッシュは消す 
+                message.messageGroupId = messageGroup.id; // 新規作成なのでDummyIDを付与
+                message.contents.forEach(content => {
+                  content.id = genDummyId('contentPart');
+                  content.messageId = message.id; // 新規作成なのでDummyIDを付与
+                });
+              });
+            });
+            // メッセージグループを保存する 
+            return safeForkJoin(forInsert.map(messageGroup =>
+              this.messageService.upsertSingleMessageGroup(messageGroup)
+            )).pipe(map(next => savedThreadGroup)); // メッセージグループを保存したらスレッドグループを返す
+          }),
+        );
+      }
+    })() as Observable<ThreadGroup>).subscribe({
+      next: newTemplate => {
+        if (replaceIndex >= 0) {
+          this.templateThreadGroupList[replaceIndex] = newTemplate;
+        } else {
+          this.templateThreadGroupList.unshift(newTemplate);
+        }
+        this.templateThreadGroupList = [...this.templateThreadGroupList].sort((a, b) => a.title.localeCompare(b.title));
+        this.threadGroupListAll.unshift(newTemplate);
+        this.snackBar.open(`「${threadName}」モードを追加しました。`, 'close', { duration: 3000 });
+        this.presetLabel = newTemplate.id;
+      },
+      error: error => {
+        this.snackBar.open(`エラーが起きて保存できませんでした。`, 'close', { duration: 3000 });
+      }
+    });
+  }
+
+  openSaveAsTemplateDialog(threadGroupId?: string): void {
+    const selectedTemplate = this.templateThreadGroupList.find(tg => tg.id === this.presetLabel) || { title: '', description: '' };
+
+    // TODO 本当はロック掛けたい。    
+
+    this.dialog.open(SaveThreadDialogComponent, {
+      data: {
+        templateThreadGroupList: this.templateThreadGroupList,
+        threadGroupId, // 新規作成なのでundefined
+        threadName: this.selectedThreadGroup.title || selectedTemplate.title,
+        description: this.selectedThreadGroup.description || selectedTemplate.description,
+        hasMessages: this.indexList.length > 1,
+        includeMessages: false,
+        isRenameOnly: false,
+      } as SaveThreadData,
+    }).beforeClosed().subscribe({
+      next: (params: SaveThreadData) => {
+        if (params) {
+          this.saveAsTemplate(params.threadName, params.description, params.includeMessages, params.threadGroupId);
+        } else { /** キャンセル */ }
+      }
+    });
+  }
+
+  /**
+   * を編集する
+   * @param $event 
+   * @param threadGroup 
+   */
+  editTemplateThreadGroup($event: MouseEvent, threadGroup: ThreadGroup): void {
+    this.stopPropagation($event);
+    this.dialog.open(SaveThreadDialogComponent, {
+      data: {
+        templateThreadGroupList: this.templateThreadGroupList,
+        threadName: threadGroup.title,
+        description: threadGroup.description,
+        hasMessages: false,
+        includeMessages: false,
+        isRenameOnly: true,
+      } as SaveThreadData,
+    }).afterClosed().subscribe({
+      next: (params: SaveThreadData) => {
+        if (params) {
+          const inDto = Utils.clone(threadGroup);
+          inDto.title = params.threadName;
+          inDto.description = params.description;
+          this.threadService.updateThreadGroupTitleAndDescription(threadGroup.projectId, inDto).subscribe({
+            next: next => {
+              // 元DTOは更新が完了してから反映する
+              threadGroup.title = params.threadName;
+              threadGroup.description = params.description;
+              this.snackBar.open(`「${params.threadName}」モードを更新しました。`, 'close', { duration: 3000 });
+            },
+            error: error => {
+              this.snackBar.open(`エラーが起きて保存できませんでした。`, 'close', { duration: 3000 });
+            },
+          });
+        } else { /** キャンセル */ }
+      }
+    });
+  }
+
+  /**
+   * スレッドグループを削除する
+   * @param $event 
+   * @param threadGroup 
+   */
+  removeTemplateThreadGroup($event: MouseEvent, threadGroup: ThreadGroup): void {
+    // this.stopPropagation($event);
+    this.dialog.open(DialogComponent, { data: { title: 'モード削除', message: `このモードを削除しますか？\n「${threadGroup.title.replace(/\n/g, '')}」`, options: ['キャンセル', '削除'] } }).afterClosed().subscribe({
+      next: next => {
+        if (next === 1) {
+          this.threadService.deleteThreadGroup(threadGroup.id).subscribe({
+            next: next => {
+              this.templateThreadGroupList.splice(this.templateThreadGroupList.indexOf(threadGroup), 1);
+              this.templateThreadGroupList = [...this.templateThreadGroupList].sort((a, b) => a.title.localeCompare(b.title));;
+            }
+          });
+        } else { /** 削除キャンセル */ }
+      }
+    });
+  }
+
   tabIndex = 0;
   scrollPositions: number[] = [];
   saveScrollPosition(tabIndex: number): void {
@@ -2027,8 +2549,11 @@ export class ChatComponent implements OnInit {
       this.scrollPositions[tabIndex] = bodyElem.nativeElement.scrollTop || 0;
     } else { }
   }
+
   restoreScrollPosition(tabIndex: number): void {
-    this.tabIndex = tabIndex;
+    // this.tabIndex = tabIndex;
+    const threadId = (this.selectedThreadGroup && !this.selectedThreadGroup.id.startsWith('dummy-')) ? this.selectedThreadGroup.id : 'new-thread';
+    this.router.navigate(['/chat', this.selectedProject.id, threadId, { tabIndex }]);
     setTimeout(() => {
       const bodyElem = this.textBodyElem().at(tabIndex);
       if (bodyElem) {

@@ -1,27 +1,3 @@
-<style>
-    /* 警告スタイル */
-    .warning {
-        /* 背景色：薄い黄色 */
-        background-color: #fff3cd;
-        /* 文字色：濃い茶色 */
-        color: #856404;
-        /* 枠線色：薄いオレンジ */
-        border: 1px solid #ffeeba;
-        /* 内側の余白 */
-        padding: 10px;
-        /* 角を少し丸くする */
-        border-radius: 4px;
-        /* 文字サイズ */
-        font-size: 16px;
-        margin-bottom: 20px;
-    }
-
-    .eye {
-        position: absolute;
-        margin-top: 10px;
-        right: 36px;
-    }
-</style>
 <ng-template #errorArea>
     @if(errorMessageList.length>0){
     <mat-card appearance="outlined" class="warning">
@@ -46,21 +22,23 @@
     <h2 class="login-title">{{ 'LOGIN' | translate }}</h2>
     <ng-container *ngTemplateOutlet="errorArea"></ng-container>
     <form [formGroup]="loginForm" class="login-form" (ngSubmit)="onSubmit()">
-
-        @for(group of curEnv.oAuthProviders;track $index){
-        @if(group.providers.length===1){
-        <a class="login-button federation" href="/api/oauth/{{group.value+(group.providers[0].id?('-'+group.providers[0].id):'')}}/login">
-            <img src="./image/{{group.value}}-logo.svg">{{group.label}}{{group.providers[0].id?('('+group.providers[0].id+')'):''}}認証
+        @for(key of apiProviderKeys;track $index){
+        @let provider=apiProviderGroupedList[key][0];
+        @if(apiProviderGroupedList[key].length===1){
+        <a class="login-button federation"
+            href="/api/public/oauth/{{g.tenantKey}}/{{provider.type}}-{{provider.name}}/login">
+            <img src="./image/{{provider.type}}-logo.svg">[{{provider.type}}] {{provider.label}}
         </a>
         } @else {
-          <mat-expansion-panel style="background: transparent;">
-            <mat-expansion-panel-header class="login-button federation" style="border-radius: 55px;">
-              <img src="./image/{{group.value}}-logo.svg" class="mr-4">{{group.label}}認証
+        <mat-expansion-panel style="border-radius: 32px;margin-top: 20px;">
+            <mat-expansion-panel-header class="login-button federation m-0" style="margin: 0;">
+                <img src="./image/{{provider.type}}-logo.svg" class="mr-4">{{provider.type}}
               <!-- <mat-panel-title>{{group.label}}</mat-panel-title> -->
             </mat-expansion-panel-header>
-            @for(provider of group.providers;track $index){
-              <a class="login-button federation" href="/api/oauth/{{group.value+(provider.id?('-'+provider.id):'')}}/login">
-                  <img src="./image/{{group.value}}-logo.svg">{{group.label}}{{provider.id?('('+provider.id+')'):''}}認証
+            @for(provider of apiProviderGroupedList[key];track $index){
+            <a class="login-button federation"
+                href="/api/public/oauth/{{g.tenantKey}}/{{provider.type}}-{{provider.name}}/login">
+                <img src="./image/{{provider.type}}-logo.svg">{{provider.label}}
               </a>
               }
           </mat-expansion-panel>

@@ -17,7 +17,6 @@ declare var _paq: any;
 
 @Component({
   selector: 'app-root',
-  standalone: true,
   imports: [
     RouterOutlet,
     MatIconModule,
@@ -72,6 +71,7 @@ export class AppComponent implements OnInit {
         /* matomoにUserIDを送る */
         _paq.push(['setUserId', next.id]);
 
+        this.g.info.user = next;
         this.g.autoRedirectToLoginPageIfAuthError = true;
         this.userService.getUserSetting().subscribe({
           next: next => {

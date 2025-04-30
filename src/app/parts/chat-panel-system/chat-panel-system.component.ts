@@ -1,4 +1,4 @@
-import { Component, effect, inject, input, output } from '@angular/core';
+import { Component, computed, effect, inject, input, output } from '@angular/core';
 import { ChatPanelBaseComponent } from '../chat-panel-base/chat-panel-base.component';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -13,11 +13,12 @@ import { MarkdownComponent } from 'ngx-markdown';
 import { MessageGroupForView, Thread } from '../../models/project-models';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { DialogComponent } from '../dialog/dialog.component';
-import { LlmModel } from '../../services/chat.service';
+import { CountTokensResponseForView, LlmModel } from '../../services/chat.service';
 import { MatRadioModule } from '@angular/material/radio';
 import { ChatCompletionToolChoiceOption } from 'openai/resources/index.mjs';
 import { MatCheckboxChange, MatCheckboxModule } from '@angular/material/checkbox';
 import { MyToolType, ToolCallPart, ToolCallService } from '../../services/tool-call.service';
+import { ExtApiProviderService } from '../../services/ext-api-provider.service';
 
 @Component({
   selector: 'app-chat-panel-system',
@@ -31,8 +32,8 @@ import { MyToolType, ToolCallPart, ToolCallService } from '../../services/tool-c
 })
 export class ChatPanelSystemComponent extends ChatPanelBaseComponent {
 
-  readonly thread = input.required<Thread>();
   readonly removable = input.required<boolean>();
+  readonly tokenObject = input.required<CountTokensResponseForView>();
 
   readonly removeThreadEmitter = output<Thread>({ alias: 'removeThread' });
 
@@ -41,6 +42,8 @@ export class ChatPanelSystemComponent extends ChatPanelBaseComponent {
   readonly threadChangeEmitter = output<Thread>({ alias: 'threadChange' });
 
   readonly toolCallService: ToolCallService = inject(ToolCallService);
+
+  readonly extApiProviderService: ExtApiProviderService = inject(ExtApiProviderService);
 
   modelIdMas: { [modelId: string]: LlmModel } = {};
   modelGroupMas: { [modelId: string]: LlmModel[] } = {};
@@ -52,6 +55,8 @@ export class ChatPanelSystemComponent extends ChatPanelBaseComponent {
     'required': { name: 'required', label: '必ず使う' }
   };
 
+  providerMas: { [provider: string]: { type: string, name: string, label: string } } = {};
+
   readonly effectBitCounter2 = effect(() => {
     this.bitCounter();
     this.initialize();
@@ -59,6 +64,14 @@ export class ChatPanelSystemComponent extends ChatPanelBaseComponent {
 
   constructor() {
     super();
+    this.extApiProviderService.getApiProviders().subscribe({
+      next: extApiProviderList => {
+        this.providerMas = extApiProviderList.reduce((acc: { [provider: string]: { type: string, name: string, label: string } }, provider) => {
+          acc[`${provider.type}-${provider.name}`] = { type: provider.type, name: provider.name, label: provider.label };
+          return acc;
+        }, {});
+      }
+    });
   }
 
   override ngOnInit(): void {

@@ -123,8 +123,8 @@ export class ThreadService {
     private readonly http: HttpClient = inject(HttpClient);
     private threadListMas: { [threadGroupId: string]: ThreadGroup[] } = {};
 
-    genInitialThreadGroupEntity(projectId: string): ThreadGroup {
-        const deafultThreadGroup = Object.keys(this.threadListMas).map(key => this.threadListMas[key].find(threadGroup => threadGroup.type === ThreadGroupType.Default)).filter(threadGroup => threadGroup)[0];
+    genInitialThreadGroupEntity(projectId: string, template?: ThreadGroup): ThreadGroup {
+        const deafultThreadGroup = template || Object.keys(this.threadListMas).map(key => this.threadListMas[key].find(threadGroup => threadGroup.type === ThreadGroupType.Default)).filter(threadGroup => threadGroup)[0];
         if (deafultThreadGroup) {
             const threadGroup = Utils.clone(deafultThreadGroup);
             threadGroup.createdAt = new Date(threadGroup.createdAt);
@@ -178,6 +178,10 @@ export class ThreadService {
     //     localStorage.setItem('settings-v2.0', JSON.stringify(threadGroup));
     // }
 
+    updateThreadGroupTitleAndDescription(projectId: string, threadGroup: ThreadGroup): Observable<ThreadGroup> {
+        return this.http.patch<ThreadGroup>(`/user/project/${projectId}/thread-group`, threadGroup);
+    }
+
     upsertThreadGroup(projectId: string, threadGroup: ThreadGroupUpsertDto): Observable<ThreadGroup> {
         const inDto = Utils.clone(threadGroup);
         if (inDto.id?.startsWith('dummy-')) {
@@ -221,8 +225,8 @@ export class ThreadService {
         return this.http.put<ThreadGroup>(`/user/thread-group/${threadGroupId}`, { projectId });
     }
 
-    cloneThreadGroup(threadGroupId: string): Observable<ThreadGroup> {
-        return this.http.post<ThreadGroup>(`/user/thread-group/clone/${threadGroupId}`, {}).pipe(tap(threadGroupResponseHandler));
+    cloneThreadGroup(threadGroupId: string, options?: { type: ThreadGroupType, title: string, description: string }): Observable<ThreadGroup> {
+        return this.http.post<ThreadGroup>(`/user/thread-group/clone/${threadGroupId}`, options || {}).pipe(tap(threadGroupResponseHandler));
     }
 
     // cloneThread(threadId: string): Observable<Thread> {
@@ -282,8 +286,6 @@ export class ThreadMessageService {
 export class MessageService {
     // private readonly authService: AuthService = inject(AuthService);
     private readonly http: HttpClient = inject(HttpClient);
-
-    showMessageGroupIdListMas: { [threadId: string]: string[] } = {};
 
     messageGroupList: MessageGroupForView[] = [];
     messageList: MessageForView[] = [];
@@ -429,10 +431,9 @@ export class MessageService {
         this.idRemapTable = {};
     }
 
-    initThreadGroup(threadGroupId: string, page: number = 1, limit: number = 1000): Observable<{ messageGroups: MessageGroupForView[] }> {
+    initThreadGroup(messageGroupList: MessageGroupForView[]): { messageGroups: MessageGroupForView[] } {
         this.clear();
-        return this.getMessageGroupList(threadGroupId, page, limit).pipe(tap(res => {
-            this.messageGroupList = res.messageGroups;
+        this.messageGroupList = messageGroupList;
             this.messageGroupList.sort((a, b) => a.seq - b.seq);
             this.messageGroupMas = this.messageGroupList.reduce((acc, messageGroup) => {
                 //// 新規で増えたのでマスターを更新
@@ -464,7 +465,14 @@ export class MessageService {
 
             // messageGroupのselectedIndexを設定
             Object.keys(this.nextMessageGroupId).forEach(previousMessageGroupId => this.resetSelectedIndex(previousMessageGroupId));
-        }));
+
+        return { messageGroups: this.messageGroupList };
+    }
+
+    loadAndInitThreadGroup(threadGroupId: string, page: number = 1, limit: number = 1000): Observable<{ messageGroups: MessageGroupForView[] }> {
+        return this.getMessageGroupList(threadGroupId, page, limit).pipe(
+            tap(res => this.initThreadGroup(res.messageGroups)),
+        );
     }
 
     /**

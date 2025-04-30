@@ -23,7 +23,7 @@ export class ToolCallService {
   }
 
   getFunctionDefinitions(): Observable<MyToolType[]> {
-    return this.http.get<MyToolType[]>('/function-definitions').pipe(
+    return this.http.get<MyToolType[]>('/public/function-definitions').pipe(
       tap(res => {
         res.forEach(tool => {
           const group = tool.info.group;
@@ -57,7 +57,7 @@ export class ToolCallService {
     } else {
       toolCallSetList.push(masterToolCallPart);
     }
-    // id系が合ったら追加しておく
+    // id系があったら追加しておく
     masterToolCallPart.toolCallGroupId = masterToolCallPart.toolCallGroupId || toolCallPart.toolCallGroupId || '';
     masterToolCallPart.toolCallId = masterToolCallPart.toolCallId || toolCallPart.toolCallId;
     switch (toolCallPart.type) {
@@ -72,7 +72,10 @@ export class ToolCallService {
         break;
       case ToolCallPartType.RESULT:
         masterToolCallPart.resultList.push(toolCallPart.body);
+        masterToolCallPart.info.isRunning = false;
         break;
+      default:
+        console.error('Unknown ToolCallPart type:', toolCallPart);
     }
     return toolCallSetList;
   }
@@ -143,7 +146,7 @@ export interface ToolCallPartInfoBody {
   label: string;
   isActive: boolean;
   isInteractive: boolean; // ユーザーの入力を要するもの
-  isRunnning: boolean;
+  isRunning: boolean;
   responseType?: 'text' | 'json' | 'markdown';
 }
 
@@ -181,7 +184,7 @@ export type ToolCallPartBody =
 
 interface ToolCallBase {
   seq?: number;
-  toolCallGroupId?: string;
+  toolCallGroupId: string;
   toolCallId: string;
 }
 export interface ToolCallPartInfo extends ToolCallBase {

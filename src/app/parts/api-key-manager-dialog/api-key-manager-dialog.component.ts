@@ -12,7 +12,9 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTableModule } from '@angular/material/table';
 import { AuthService, OAuthAccount } from '../../services/auth.service';
-import { environment } from '../../../environments/environment';
+import { ExtApiProviderAuthType, ExtApiProviderEntity } from '../../models/models';
+import { ExtApiProviderService } from '../../services/ext-api-provider.service';
+import { GService } from '../../services/g.service';
 
 
 @Component({
@@ -28,14 +30,19 @@ export class ApiKeyManagerDialogComponent implements OnInit {
   private fb = inject(FormBuilder);
   private snackBar = inject(MatSnackBar);
   private dialog = inject(MatDialog);
+  readonly g: GService = inject(GService);
+  readonly authServices: AuthService = inject(AuthService);
+  readonly extApiProviderService: ExtApiProviderService = inject(ExtApiProviderService);
 
-  apiLabelForm: FormGroup;
-  apiKeyForm: FormGroup;
+  apiLabelForm!: FormGroup;
+  apiKeyForm!: FormGroup;
   hideKey = true;
 
-  providerGroups = environment.apiKeyProviders;
+  firstProviderValue: string = '';
 
-  readonly authServices: AuthService = inject(AuthService);
+  apiProviderMap: { [key: string]: ExtApiProviderEntity } = {};
+  apiProviderGroupedKeys: string[] = [];
+  apiProviderGroupedList: { [type: string]: ExtApiProviderEntity[] } = {};
 
   apiKeys: OAuthAccount[] = [];
   // displayedColumns: string[] = ['provider', 'label', 'createdAt', 'updatedAt', 'actions'];
@@ -45,20 +52,56 @@ export class ApiKeyManagerDialogComponent implements OnInit {
     this.apiLabelForm = this.fb.group({
       label: ['', Validators.required]
     });
-    this.apiKeyForm = this.fb.group({
-      provider: [this.providerGroups[0].value, Validators.required],
-      key: ['', Validators.required]
+
+    this.extApiProviderService.getApiProviders().subscribe({
+      next: (apiProviderList) => {
+        this.apiProviderMap = apiProviderList.reduce((acc: { [key: string]: ExtApiProviderEntity }, apiProvider: ExtApiProviderEntity) => {
+          acc[`${apiProvider.type}-${apiProvider.name}`] = apiProvider;
+          return acc;
+        }, {});
+        this.apiProviderGroupedList = apiProviderList.filter(obj => obj.authType === ExtApiProviderAuthType.APIKey).reduce((acc: { [type: string]: ExtApiProviderEntity[] }, apiProvider: ExtApiProviderEntity) => {
+          const type = apiProvider.type;
+          if (!acc[type]) {
+            this.apiProviderGroupedKeys.push(type);
+            acc[type] = [];
+          }
+          acc[type].push(apiProvider);
+          return acc;
+        }, {});
+        // console.log(this.apiProviderGroupedList);
+        console.log(apiProviderList);
+      },
+      error: (error) => {
+        console.log(error);
+        this.snackBar.open(`APIプロバイダの取得に失敗しました。`, 'close', { duration: 3000 });
+      },
+      complete: () => {
+        const apiProvider0 = this.apiProviderGroupedList[this.apiProviderGroupedKeys[0]][0];
+        this.firstProviderValue = `${apiProvider0.type}-${apiProvider0.name}`;
+
+        this.apiKeyForm = this.fb.group({
+          provider: [this.firstProviderValue, Validators.required],
+          key: ['', Validators.required]
+        });
+        console.log('complete');
+        this.loadApiKeys();
+      }
     });
   }
 
   ngOnInit(): void {
-    this.loadApiKeys();
   }
 
   loadApiKeys(): void {
     this.authServices.getOAuthAccountList().subscribe({
       next: next => {
         this.apiKeys = next.oauthAccounts;
+        this.apiKeys.forEach(key => {
+          (key as any).label = this.apiProviderMap[key.provider] ? this.apiProviderMap[key.provider].label : key.provider;
+        });
+      },
+      error: error => {
+        this.snackBar.open('API鍵の取得に失敗しました', '閉じる', { duration: 3000 });
       },
     });
   }
@@ -85,7 +128,7 @@ export class ApiKeyManagerDialogComponent implements OnInit {
           this.loadApiKeys();
           // リセット時に初期値をセットすることで、バリデーションエラーを回避する
           this.apiKeyForm.reset({
-            provider: this.providerGroups[0].value + (this.providerGroups[0].providers[0].id ? ('-' + this.providerGroups[0].providers[0].id) : ''),
+            provider: this.firstProviderValue,
             key: ''
           });
           // フォームの状態をクリアする
@@ -132,7 +175,7 @@ export class ApiKeyManagerDialogComponent implements OnInit {
           <mat-icon>content_copy</mat-icon>
         </button>
       </div>
-      <p>API鍵はこの画面は一度閉じると二度と表示されません。</p>
+      <p>API鍵はこの画面を一度閉じると二度と表示されません。</p>
     </mat-dialog-content>
     <mat-dialog-actions>
       <button mat-button mat-dialog-close>閉じる</button>

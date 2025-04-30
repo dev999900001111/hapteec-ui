@@ -1,6 +1,7 @@
 // ./src/app/models.ts
 
 import { ChatCompletionCreateParamsBase } from 'openai/resources/chat/completions';
+import { BaseEntity } from './project-models';
 
 export enum UserStatus {
     // アクティブ系
@@ -34,6 +35,7 @@ export interface User {
     email: string;
     role: UserRole;
     status: UserStatus;
+    tenantKey: string;
     // public profilePictureUrl: string
 }
 export interface TwoFactorAuthDetails {
@@ -121,4 +123,49 @@ export type MessageGroupType = 'SINGLE' | 'PARALLEL' | 'REGENERATED';
 export interface GenerateContentRequestForCache {
     ttl?: { seconds: number, nanos: number };
     expire_time?: string; // "expire_time":"2024-06-30T09:00:00.000000Z"
+}
+
+export enum ExtApiProviderAuthType {
+    OAuth2 = 'OAuth2',
+    APIKey = 'APIKey',
+}
+
+export enum ExtApiProviderPostType {
+    json = 'json',
+    params = 'params',
+    // form = 'form',
+}
+
+export interface OAuth2ConfigTemplate {
+    pathAuthorize: string;
+    pathAccessToken: string;
+    scope: string;
+    postType: ExtApiProviderPostType;
+    redirectUri: string;
+}
+export interface OAuth2Config extends OAuth2ConfigTemplate {
+    clientId: string;
+    clientSecret: string;
+    requireMailAuth: boolean;
+}
+export interface ExtApiProviderTemplateEntity extends BaseEntity {
+    name: string; // 'gitlab' | 'gitea' | etc
+    authType: ExtApiProviderAuthType;
+    pathUserInfo: string;
+    uriBaseAuth: string;
+    oAuth2Config?: OAuth2ConfigTemplate;
+    description?: string;
+}
+export interface ExtApiProviderEntity extends ExtApiProviderTemplateEntity {
+    type: string; // 'gitlab' | 'gitea' | etc
+    label: string; // 'GitLab' | 'Gitea' | etc
+    uriBase: string;
+    oAuth2Config?: OAuth2Config;
+    sortSeq: number;
+}
+
+export interface TenantEntity extends BaseEntity {
+    name: string;
+    description?: string;
+    isActive: boolean;
 }

@@ -67,6 +67,15 @@ export class Utils {
     }
 
     /**
+     * 文字列をBase64に変換する関数
+     * @param str - 変換する文字列
+     * @returns Base64に変換された文字列
+     */
+    public static toBase64(str: string): string {
+        return btoa(new TextEncoder().encode(str).reduce((data, byte) => data + String.fromCharCode(byte), ''));
+    }
+
+    /**
      * 文字列の最初の文字を大文字に変換する関数
      * @param str - 大文字に変換する文字列
      * @returns 大文字に変換された文字列
@@ -597,3 +606,11 @@ export class Utils {
         return JSON.parse(JSON.stringify(obj)) as T;
     }
 }
+
+/**
+ * TypeScriptの型を部分的にオプショナルにするユーティリティ型
+ * @template T - オブジェクトの型
+ * @template K - オプショナルにするプロパティのキーの型
+ * @returns - オプショナルにしたオブジェクトの型
+ */
+export type MakeOptional<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
